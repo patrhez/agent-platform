@@ -14,6 +14,7 @@ func TestSearchSkipsLocalDependencyAndBuildCaches(t *testing.T) {
 	writeSearchTestFile(t, filepath.Join(repositoryRoot, ".gocache", "cached.go"), "nginx cached result")
 	writeSearchTestFile(t, filepath.Join(repositoryRoot, ".gomodcache", "module.go"), "nginx module result")
 	writeSearchTestFile(t, filepath.Join(repositoryRoot, "node_modules", "package.js"), "nginx package result")
+	writeSearchTestFile(t, filepath.Join(repositoryRoot, ".venv", "lib", "site.py"), "nginx venv result")
 	writeSearchTestFile(t, filepath.Join(repositoryRoot, ".git", "config"), "nginx git result")
 
 	service, err := New(workspaceRoot)
@@ -29,6 +30,23 @@ func TestSearchSkipsLocalDependencyAndBuildCaches(t *testing.T) {
 	}
 	if result.Matches[0].Path != "src/server.go" {
 		t.Errorf("Search() path = %q, want src/server.go", result.Matches[0].Path)
+	}
+}
+
+func TestSearchMissingPathPrefixReturnsNotFound(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	repositoryRoot := filepath.Join(workspaceRoot, "repo")
+	writeSearchTestFile(t, filepath.Join(repositoryRoot, "src", "server.go"), "hello")
+
+	service, err := New(workspaceRoot)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	_, err = service.Search(context.Background(), SearchInput{
+		Repo: "repo", Query: "hello", PathPrefix: "missing_dir",
+	})
+	if err != ErrFileNotFound {
+		t.Fatalf("Search() error = %v, want ErrFileNotFound", err)
 	}
 }
 

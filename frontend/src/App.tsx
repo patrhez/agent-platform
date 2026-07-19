@@ -4,8 +4,6 @@ import { subscribeToRun } from "./api/events";
 import { activeRuns, applyEvent, assistantDraft, initialState, runEvents } from "./state/conversation";
 import { Chat } from "./components/Chat";
 import { ConversationList } from "./components/ConversationList";
-import { RunStatus } from "./components/RunStatus";
-import { RunTrace } from "./components/RunTrace";
 import { newClientMessageID } from "./id";
 import "./app.css";
 
@@ -73,10 +71,9 @@ export default function App() {
 
   const latestRun = visibleDetail?.runs.at(-1);
   const draft = latestRun ? assistantDraft(state, latestRun.id) : undefined;
-  const latestRunEvents = latestRun ? runEvents(state, latestRun.id) : [];
-  const hasAssistantMessage = latestRun
-    ? visibleDetail?.messages.some((message) => message.role === "assistant" && message.runId === latestRun.id)
-    : false;
+  const eventsByRunID = Object.fromEntries(
+    (visibleDetail?.runs ?? []).map((run) => [run.id, runEvents(state, run.id)]),
+  );
 
   return (
     <div className="layout">
@@ -91,9 +88,13 @@ export default function App() {
           <h1>Issue Troubleshooter Agent</h1>
           {error && <p className="error">{error}</p>}
         </header>
-        <Chat messages={visibleDetail?.messages ?? []} runs={visibleDetail?.runs ?? []} draft={draft} onSend={send} />
-        <RunStatus run={hasAssistantMessage ? undefined : latestRun} />
-        <RunTrace runID={latestRun?.id} events={latestRunEvents} />
+        <Chat
+          messages={visibleDetail?.messages ?? []}
+          runs={visibleDetail?.runs ?? []}
+          eventsByRunID={eventsByRunID}
+          draft={draft}
+          onSend={send}
+        />
       </section>
     </div>
   );

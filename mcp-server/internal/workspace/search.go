@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -17,6 +18,8 @@ var excludedSearchDirectories = map[string]struct{}{
 	".git":         {},
 	".gocache":     {},
 	".gomodcache":  {},
+	".venv":        {},
+	"venv":         {},
 	"node_modules": {},
 }
 
@@ -91,6 +94,16 @@ func resolveSearchRoot(repositoryRoot string, pathPrefix string) (string, error)
 	searchRoot := filepath.Join(repositoryRoot, filepath.Clean(pathPrefix))
 	if err := ensureWithinRoot(repositoryRoot, searchRoot); err != nil {
 		return "", err
+	}
+	info, err := os.Stat(searchRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", ErrFileNotFound
+		}
+		return "", fmt.Errorf("stat pathPrefix: %w", err)
+	}
+	if !info.IsDir() {
+		return "", ErrInvalidPath
 	}
 	return searchRoot, nil
 }

@@ -72,8 +72,13 @@ func (executor *WorkspaceExecutor) Call(ctx context.Context, request ToolRequest
 	if err != nil {
 		return ToolResult{}, err
 	}
+	// Tool-level failures (bad pathPrefix, missing file, etc.) are returned to the model
+	// so the ReAct loop can recover instead of failing the entire Run.
 	if result.IsError {
-		return ToolResult{}, fmt.Errorf("Workspace Tool %s returned an error: %s", request.Name, content)
+		return ToolResult{
+			Content: content,
+			Summary: summarizeResult("Tool execution failed: " + content),
+		}, nil
 	}
 	return ToolResult{Content: content, Summary: summarizeResult(content)}, nil
 }

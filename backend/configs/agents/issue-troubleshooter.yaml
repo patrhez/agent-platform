@@ -7,7 +7,7 @@ agent:
     model: ${LLM_MODEL}
     temperature: 0.1
   limits:
-    max_steps: 12
+    max_steps: 50
     run_timeout_seconds: 600
   mcp_servers:
     - key: workspace

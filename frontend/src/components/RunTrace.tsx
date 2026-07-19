@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type RunTrace as RunTraceResponse } from "../api/client";
+import { api, type Run, type RunTrace as RunTraceResponse } from "../api/client";
 import type { RunEvent } from "../api/events";
 
 type TimelineItem = {
@@ -14,38 +14,89 @@ type TimelineItem = {
   durationMs?: number;
 };
 
-export function RunTrace({ runID, events }: { runID?: string; events: RunEvent[] }) {
+export function RunTrace({ run, events }: { run: Run; events: RunEvent[] }) {
   const [trace, setTrace] = useState<RunTraceResponse>();
+  const toolEventEpoch = events.reduce(
+    (count, event) => count + (event.type === "tool.started" || event.type === "tool.completed" ? 1 : 0),
+    0,
+  );
   useEffect(() => {
     let active = true;
-    setTrace(undefined);
-    if (runID) {
-      void api.getTrace(runID).then((value) => { if (active) setTrace(value); });
-    }
+    void api.getTrace(run.id).then((value) => { if (active) setTrace(value); });
     return () => { active = false; };
-  }, [runID]);
+  }, [run.id, toolEventEpoch]);
   const timeline = useMemo(
     () => mergeTimeline(persistedTimeline(trace), liveTimeline(events)),
     [trace, events],
   );
-  if (!runID) return null;
-  return <details className="run-trace" open>
-    <summary>Execution trace</summary>
-    <ol>
-      {timeline.map((item) => <li className={`timeline-item ${item.status}`} key={item.key}>
-        <div className="timeline-heading">
-          <span>{statusLabel(item.status)}</span>
-          <strong>{item.toolName ?? item.label}</strong>
-          {item.durationMs !== undefined && <small>{item.durationMs}ms</small>}
-        </div>
-        {item.toolName && <SafeArguments toolName={item.toolName} value={item.arguments} />}
-        {item.resultSummary && <details className="tool-result">
-          <summary>Result summary</summary>
-          <p>{item.resultSummary}</p>
-        </details>}
-      </li>)}
-    </ol>
-  </details>;
+  const liveActive = run.status === "queued" || run.status === "running" || run.status === "waiting";
+  const summary = traceSummary(run, timeline);
+  const activity = liveActivity(timeline, liveActive);
+
+  return <div className="run-trace-panel">
+    <details className="run-trace">
+      <summary>{summary}</summary>
+      <ol>
+        {timeline.map((item) => <li className={`timeline-item ${item.status}`} key={item.key}>
+          <div className="timeline-heading">
+            <span>{statusLabel(item.status)}</span>
+            <strong>{item.toolName ?? item.label}</strong>
+            {item.durationMs !== undefined && <small>{item.durationMs}ms</small>}
+          </div>
+          {item.toolName && <SafeArguments toolName={item.toolName} value={item.arguments} />}
+          {item.resultSummary && <details className="tool-result">
+            <summary>Result summary</summary>
+            <p>{item.resultSummary}</p>
+          </details>}
+        </li>)}
+      </ol>
+    </details>
+    {activity && <p className="run-trace-activity" aria-live="polite">{activity}</p>}
+  </div>;
+}
+
+function traceSummary(run: Run, timeline: TimelineItem[]): string {
+  if (run.status === "failed") {
+    return run.errorCode ? `Failed (${run.errorCode})` : "Failed";
+  }
+  if (run.status === "cancelled") return "Cancelled";
+
+  const tools = timeline.filter((item) => item.kind === "tool");
+  const runningTool = [...tools].reverse().find((item) => item.status === "running");
+  const lastTool = [...tools].reverse().find((item) => item.toolName);
+  const liveActive = run.status === "queued" || run.status === "running" || run.status === "waiting";
+  if (liveActive) {
+    if (tools.length === 0 && timeline.length === 0 && run.status === "queued") return "Queued";
+    const count = toolCountLabel(tools.length);
+    if (runningTool?.toolName) {
+      return count ? `Running · ${count} · ${runningTool.toolName}…` : `Running · ${runningTool.toolName}…`;
+    }
+    if (lastTool?.toolName) {
+      return count ? `Running · ${count} · last ${lastTool.toolName}` : `Running · last ${lastTool.toolName}`;
+    }
+    return "Running";
+  }
+
+  const duration = formatDuration(runDurationMs(run));
+  const toolCount = tools.length;
+  if (toolCount > 0) return `Used ${toolCount} tools · ${duration}`;
+  return `Completed · ${duration}`;
+}
+
+function liveActivity(timeline: TimelineItem[], liveActive: boolean): string | undefined {
+  if (!liveActive) return undefined;
+  const tools = timeline.filter((item) => item.kind === "tool");
+  const runningTool = [...tools].reverse().find((item) => item.status === "running");
+  if (runningTool?.toolName) return `Calling ${runningTool.toolName}…`;
+  const lastTool = [...tools].reverse().find((item) => item.toolName);
+  if (lastTool?.toolName) return `Last tool: ${lastTool.toolName} · waiting for model`;
+  if (timeline.some((item) => item.kind === "model")) return "Waiting for model…";
+  return "Starting…";
+}
+
+function toolCountLabel(count: number): string | undefined {
+  if (count <= 0) return undefined;
+  return count === 1 ? "1 tool" : `${count} tools`;
 }
 
 function persistedTimeline(trace?: RunTraceResponse): TimelineItem[] {
@@ -75,6 +126,15 @@ function persistedTimeline(trace?: RunTraceResponse): TimelineItem[] {
 
 function liveTimeline(events: RunEvent[]): TimelineItem[] {
   return events.flatMap((event): TimelineItem[] => {
+    if (event.type === "progress.updated") {
+      return [{
+        key: `progress:${event.seq}`,
+        order: 100_000 + event.seq,
+        kind: "model",
+        label: stringValue(event.payload.summary) ?? "Working",
+        status: "running",
+      }];
+    }
     if (event.type === "assistant.started") {
       return [{
         key: `stream:${String(event.payload.streamId ?? event.seq)}`,
@@ -146,6 +206,17 @@ function safeArguments(toolName: string, value: unknown): Array<[string, string]
       ? [[label, String(content)]]
       : [];
   });
+}
+
+function runDurationMs(run: Run): number {
+  if (!run.finishedAt) return 0;
+  return elapsedMilliseconds(run.createdAt, run.finishedAt);
+}
+
+function formatDuration(durationMs: number): string {
+  if (durationMs < 1000) return `${Math.max(0, Math.round(durationMs))}ms`;
+  const seconds = durationMs / 1000;
+  return Number.isInteger(seconds) ? `${seconds}s` : `${seconds.toFixed(1)}s`;
 }
 
 function elapsedMilliseconds(start: string, end: string): number {
