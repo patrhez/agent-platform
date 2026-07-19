@@ -192,20 +192,41 @@ function SafeArguments({ toolName, value }: { toolName: string; value: unknown }
   </dl>;
 }
 
+const knownToolFields: Record<string, Array<[string, string]>> = {
+  "code.search": [["repo", "Repository"], ["query", "Query"], ["pathPrefix", "Path"], ["glob", "File scope"], ["maxResults", "Max results"], ["regex", "Regex"], ["caseInsensitive", "Ignore case"]],
+  "file.read": [["repo", "Repository"], ["path", "File"], ["startLine", "Start line"], ["endLine", "End line"]],
+  "file.list": [["repo", "Repository"], ["path", "Path"], ["glob", "File scope"], ["maxDepth", "Depth"], ["maxEntries", "Max entries"]],
+  "file.stat": [["repo", "Repository"], ["path", "Path"]],
+  "workspace.list_repositories": [],
+};
+
+const sensitiveKeyPattern = /key|token|secret|password|credential|auth/i;
+const maximumArgumentLength = 120;
+
 function safeArguments(toolName: string, value: unknown): Array<[string, string]> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   const source = value as Record<string, unknown>;
-  const fields = toolName === "code.search"
-    ? [["repo", "Repository"], ["query", "Query"], ["pathPrefix", "Path"], ["glob", "File scope"], ["maxResults", "Max results"]]
-    : toolName === "file.read"
-      ? [["repo", "Repository"], ["path", "File"], ["startLine", "Start line"], ["endLine", "End line"]]
-      : [];
-  return fields.flatMap(([key, label]): Array<[string, string]> => {
-    const content = source[key];
-    return typeof content === "string" || typeof content === "number"
-      ? [[label, String(content)]]
+  const fields = knownToolFields[toolName];
+  if (fields) {
+    return fields.flatMap(([key, label]): Array<[string, string]> => {
+      const content = source[key];
+      return typeof content === "string" || typeof content === "number" || typeof content === "boolean"
+        ? [[label, truncate(String(content))]]
+        : [];
+    });
+  }
+  // Unknown tools receive backend-sanitized arguments; show scalar values
+  // while dropping anything that still looks like a credential.
+  return Object.entries(source).flatMap(([key, content]): Array<[string, string]> => {
+    if (sensitiveKeyPattern.test(key)) return [];
+    return typeof content === "string" || typeof content === "number" || typeof content === "boolean"
+      ? [[key, truncate(String(content))]]
       : [];
   });
+}
+
+function truncate(value: string): string {
+  return value.length > maximumArgumentLength ? `${value.slice(0, maximumArgumentLength)}…` : value;
 }
 
 function runDurationMs(run: Run): number {

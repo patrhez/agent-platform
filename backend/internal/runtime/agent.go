@@ -46,13 +46,16 @@ type AssistantStreamEvent struct {
 	Text     string
 }
 
-// ToolRequest is an allowlisted Workspace MCP invocation requested by the model.
+// ToolRequest is an allowlisted MCP invocation requested by the model.
 type ToolRequest struct {
 	ID             string
 	IdempotencyKey string
 	ServerKey      string
 	Name           string
 	Arguments      json.RawMessage
+	// SafeArguments contains only the argument keys allowlisted for
+	// user-visible events and logs.
+	SafeArguments map[string]any
 }
 
 // ToolResult is the safe model-facing result of one MCP Tool invocation.

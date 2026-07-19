@@ -41,11 +41,11 @@ func TestEinoRunnerStreamsAssistantContent(t *testing.T) {
 		"reasoning-content": "private reasoning metadata",
 		"request-id":        "request-1",
 	}
-	runner := EinoRunner{model: &streamingTestModel{chunks: []*schema.Message{first, second}}}
 	events := make([]AssistantStreamEvent, 0, 3)
 
-	response, err := runner.streamModelResponse(
+	response, err := streamModelResponse(
 		context.Background(),
+		&streamingTestModel{chunks: []*schema.Message{first, second}},
 		[]*schema.Message{schema.UserMessage("test")},
 		"run-1:2:1",
 		2,
@@ -101,7 +101,7 @@ func TestRestoreStateIncludesOrderedConversationHistory(t *testing.T) {
 		},
 	}
 
-	state, ordinal, err := restoreState(input, nil)
+	state, ordinal, err := restoreState(input, nil, "test system prompt")
 	if err != nil {
 		t.Fatalf("restoreState() error = %v", err)
 	}
@@ -128,7 +128,7 @@ func TestRestoreStateUsesCheckpointWithoutAppendingConversationHistory(t *testin
 	checkpoint, err := newCheckpoint("run-2", 4, checkpointState{
 		Iteration: 2,
 		Messages: []*schema.Message{
-			schema.SystemMessage(systemPrompt),
+			schema.SystemMessage("test system prompt"),
 			schema.UserMessage("original question"),
 			schema.AssistantMessage("checkpointed answer", nil),
 		},
@@ -144,7 +144,7 @@ func TestRestoreStateUsesCheckpointWithoutAppendingConversationHistory(t *testin
 		},
 	}
 
-	state, ordinal, err := restoreState(input, checkpoint)
+	state, ordinal, err := restoreState(input, checkpoint, "test system prompt")
 	if err != nil {
 		t.Fatalf("restoreState() error = %v", err)
 	}
@@ -179,61 +179,56 @@ func TestCheckpointDoesNotPersistReasoningMetadata(t *testing.T) {
 	}
 }
 
-func TestToolRequestMapsModelToolNamesToWorkspaceMCPTools(t *testing.T) {
-	testCases := []struct {
-		name      string
-		modelTool string
-		mcpTool   string
-	}{
-		{name: "search", modelTool: "code_search", mcpTool: "code.search"},
-		{name: "read", modelTool: "file_read", mcpTool: "file.read"},
-		{name: "list repositories", modelTool: "workspace_list_repositories", mcpTool: "workspace.list_repositories"},
+func TestToolRequestRoutesModelToolNamesToConfiguredServers(t *testing.T) {
+	executor := &fakeMCPExecutor{tools: map[string]toolMetadata{
+		"code.search": {Description: "search code"},
+	}}
+	toolset, err := connectToolset(
+		context.Background(),
+		[]MCPServer{{
+			Key:           "workspace",
+			URL:           "http://example",
+			AllowedTools:  []string{"code.search"},
+			SafeArguments: map[string][]string{"code.search": {"repo", "query"}},
+		}},
+		func(context.Context, MCPServer) (mcpExecutor, error) { return executor, nil },
+	)
+	if err != nil {
+		t.Fatalf("connectToolset() error = %v", err)
 	}
+	defer func() { _ = toolset.Close() }()
 
-	runner := EinoRunner{}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			call := &schema.ToolCall{
-				ID: "provider-call-id",
-				Function: schema.FunctionCall{
-					Name:      testCase.modelTool,
-					Arguments: `{}`,
-				},
-			}
-
-			request, err := runner.toolRequest("run-id", call)
-			if err != nil {
-				t.Fatalf("toolRequest() error = %v", err)
-			}
-			if request.Name != testCase.mcpTool {
-				t.Errorf("request.Name = %q, want %q", request.Name, testCase.mcpTool)
-			}
-		})
+	call := &schema.ToolCall{
+		ID: "provider-call-id",
+		Function: schema.FunctionCall{
+			Name:      "code_search",
+			Arguments: `{"repo":"agent-platform","query":"stream","workspaceRoot":"/private"}`,
+		},
 	}
-}
-
-func TestWorkspaceToolInfosUseProviderCompatibleNames(t *testing.T) {
-	for _, tool := range workspaceToolInfos() {
-		for _, character := range tool.Name {
-			valid := character >= 'a' && character <= 'z' ||
-				character >= 'A' && character <= 'Z' ||
-				character >= '0' && character <= '9' || character == '_' || character == '-'
-			if !valid {
-				t.Errorf("Workspace Tool name %q contains unsupported character %q", tool.Name, character)
-			}
-		}
+	request, binding, err := toolRequest("run-id", call, toolset)
+	if err != nil {
+		t.Fatalf("toolRequest() error = %v", err)
+	}
+	if request.Name != "code.search" || request.ServerKey != "workspace" {
+		t.Errorf("request = %q on %q, want code.search on workspace", request.Name, request.ServerKey)
+	}
+	if binding.executor != executor {
+		t.Error("binding.executor is not the configured executor")
+	}
+	if request.SafeArguments["repo"] != "agent-platform" || request.SafeArguments["workspaceRoot"] != nil {
+		t.Errorf("request.SafeArguments = %#v, want only allowlisted keys", request.SafeArguments)
 	}
 }
 
 func TestToolRequestRejectsUnknownModelTool(t *testing.T) {
-	runner := EinoRunner{}
-	_, err := runner.toolRequest("run-id", &schema.ToolCall{
+	toolset := &mcpToolset{bindings: map[string]toolBinding{}}
+	_, _, err := toolRequest("run-id", &schema.ToolCall{
 		ID: "provider-call-id",
 		Function: schema.FunctionCall{
 			Name:      "code.search",
 			Arguments: `{}`,
 		},
-	})
+	}, toolset)
 	if err == nil {
 		t.Fatal("toolRequest() error = nil, want rejection for unsupported model Tool name")
 	}

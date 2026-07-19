@@ -18,5 +18,6 @@ FROM alpine:3.22
 
 COPY --from=build /out/worker /usr/local/bin/worker
 COPY configs/agents/issue-troubleshooter.yaml /etc/agent-platform/issue-troubleshooter.yaml
+COPY configs/agents/skills /etc/agent-platform/skills
 
 ENTRYPOINT ["/usr/local/bin/worker"]

@@ -135,6 +135,21 @@ describe("RunTrace", () => {
     expect(screen.getByText("read 20 lines")).toBeTruthy();
   });
 
+  it("renders scalar arguments for unknown tools while hiding credential-like keys", async () => {
+    vi.mocked(api.getTrace).mockResolvedValue({ steps: [], toolCalls: [] });
+    const toolStarted = event(1, "tool.started", {
+      toolCallId: "tool-3", tool: "docs.lookup", status: "running",
+      arguments: { topic: "deployment", limit: 5, authToken: "secret", nested: { skip: true } },
+      durationMs: 0,
+    });
+    render(<RunTrace run={run} events={[toolStarted]} />);
+
+    expect(await screen.findByText("deployment")).toBeTruthy();
+    expect(screen.getByText("5")).toBeTruthy();
+    expect(screen.queryByText(/secret/)).toBeNull();
+    expect(screen.queryByText(/skip/)).toBeNull();
+  });
+
   it("shows a safe live failure state", async () => {
     const failedRun: Run = { ...run, status: "failed", errorCode: "runtime_error" };
     render(<RunTrace run={failedRun} events={[event(4, "tool.completed", {

@@ -1,6 +1,6 @@
 agent:
   id: issue-troubleshooter
-  version: 2026-07-17.1
+  version: 2026-07-19.2
   runtime: eino-react
   model:
     api_mode: chat_completions
@@ -12,5 +12,10 @@ agent:
   mcp_servers:
     - key: workspace
       url: ${WORKSPACE_MCP_URL}
-      allowed_tools: [workspace.list_repositories, code.search, file.read]
-  skills_bundle_version: 2026-07-17.1
+      allowed_tools: [workspace.list_repositories, file.list, file.stat, code.search, file.read]
+      safe_arguments:
+        file.list: [repo, path, glob, maxDepth, maxEntries]
+        file.stat: [repo, path]
+        code.search: [repo, query, pathPrefix, glob, maxResults, regex, caseInsensitive]
+        file.read: [repo, path, startLine, endLine]
+  skills_bundle_version: 2026-07-19.2

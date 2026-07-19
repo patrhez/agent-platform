@@ -18,6 +18,7 @@ FROM alpine:3.22
 
 COPY --from=build /out/api /usr/local/bin/api
 COPY configs/agents/issue-troubleshooter.yaml /etc/agent-platform/issue-troubleshooter.yaml
+COPY configs/agents/skills /etc/agent-platform/skills
 
 EXPOSE 8080
 

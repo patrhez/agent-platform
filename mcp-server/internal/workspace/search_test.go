@@ -50,6 +50,55 @@ func TestSearchMissingPathPrefixReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestSearchSupportsRegexAndCaseInsensitiveMatching(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	writeSearchTestFile(t, filepath.Join(workspaceRoot, "repo", "main.go"), "func StreamRunEvents() {}\nfunc other() {}")
+
+	service, err := New(workspaceRoot)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	regex, err := service.Search(context.Background(), SearchInput{
+		Repo: "repo", Query: `func\s+Stream\w+`, Regex: true,
+	})
+	if err != nil {
+		t.Fatalf("Search(regex) error = %v", err)
+	}
+	if len(regex.Matches) != 1 || regex.Matches[0].Line != 1 {
+		t.Errorf("Search(regex) matches = %#v, want line 1", regex.Matches)
+	}
+	insensitive, err := service.Search(context.Background(), SearchInput{
+		Repo: "repo", Query: "streamrunevents", CaseInsensitive: true,
+	})
+	if err != nil {
+		t.Fatalf("Search(caseInsensitive) error = %v", err)
+	}
+	if len(insensitive.Matches) != 1 {
+		t.Errorf("Search(caseInsensitive) matches = %d, want 1", len(insensitive.Matches))
+	}
+	if _, err := service.Search(context.Background(), SearchInput{Repo: "repo", Query: "(", Regex: true}); err != ErrInvalidPath {
+		t.Errorf("Search(bad regex) error = %v, want ErrInvalidPath", err)
+	}
+}
+
+func TestSearchSkipsBinaryFiles(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	writeSearchTestFile(t, filepath.Join(workspaceRoot, "repo", "text.go"), "needle in text")
+	writeSearchTestFile(t, filepath.Join(workspaceRoot, "repo", "blob.bin"), "needle\x00binary")
+
+	service, err := New(workspaceRoot)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	result, err := service.Search(context.Background(), SearchInput{Repo: "repo", Query: "needle"})
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(result.Matches) != 1 || result.Matches[0].Path != "text.go" {
+		t.Errorf("Search() matches = %#v, want only text.go", result.Matches)
+	}
+}
+
 func writeSearchTestFile(t *testing.T, path string, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -1,15 +1,19 @@
 package workspace
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
-	maxReadBytes = 256 * 1024
-	maxReadLines = 1000
+	maxReadFileBytes = 16 * 1024 * 1024
+	maxReadLines     = 1000
+	maxLineBytes     = 4096
 )
 
 // ReadInput identifies a bounded contiguous range of a repository file.
@@ -28,19 +32,20 @@ type ReadLine struct {
 
 // ReadOutput is the safe, bounded result of a file.read call.
 type ReadOutput struct {
-	Repo      string     `json:"repo"`
-	Path      string     `json:"path"`
-	StartLine int        `json:"startLine"`
-	EndLine   int        `json:"endLine"`
-	Lines     []ReadLine `json:"lines"`
+	Repo       string     `json:"repo"`
+	Path       string     `json:"path"`
+	StartLine  int        `json:"startLine"`
+	EndLine    int        `json:"endLine"`
+	TotalLines int        `json:"totalLines"`
+	Lines      []ReadLine `json:"lines"`
 }
 
-// Read returns requested lines from one regular file under an allowed repository root.
-func (service *Service) Read(context context.Context, input ReadInput) (ReadOutput, error) {
+// Read streams the requested lines from one regular file under an allowed repository root.
+func (service *Service) Read(ctx context.Context, input ReadInput) (ReadOutput, error) {
 	if err := validateReadInput(input); err != nil {
 		return ReadOutput{}, err
 	}
-	if err := context.Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return ReadOutput{}, fmt.Errorf("read context: %w", err)
 	}
 	repositoryRoot, err := service.resolveRepository(input.Repo)
@@ -51,11 +56,18 @@ func (service *Service) Read(context context.Context, input ReadInput) (ReadOutp
 	if err != nil {
 		return ReadOutput{}, err
 	}
-	contents, err := readBoundedFile(path)
+	lines, totalLines, err := streamLines(path, input.StartLine, input.EndLine)
 	if err != nil {
 		return ReadOutput{}, err
 	}
-	return selectLines(input, contents), nil
+	return ReadOutput{
+		Repo:       input.Repo,
+		Path:       input.Path,
+		StartLine:  input.StartLine,
+		EndLine:    input.EndLine,
+		TotalLines: totalLines,
+		Lines:      lines,
+	}, nil
 }
 
 func validateReadInput(input ReadInput) error {
@@ -68,49 +80,54 @@ func validateReadInput(input ReadInput) error {
 	return nil
 }
 
-func readBoundedFile(path string) ([]byte, error) {
+// streamLines scans the file once, collecting the requested range and counting all lines,
+// so large files never need to be held in memory.
+func streamLines(path string, startLine int, endLine int) ([]ReadLine, int, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("stat file: %w", err)
+		return nil, 0, fmt.Errorf("stat file: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, ErrInvalidPath
+		return nil, 0, ErrInvalidPath
 	}
-	if info.Size() > maxReadBytes {
-		return nil, ErrResultLimitExceeded
+	if info.Size() > maxReadFileBytes {
+		return nil, 0, ErrResultLimitExceeded
 	}
-	contents, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("read file: %w", err)
+		return nil, 0, fmt.Errorf("open file: %w", err)
 	}
-	if len(contents) > maxReadBytes {
-		return nil, ErrResultLimitExceeded
-	}
-	return contents, nil
-}
+	defer func() { _ = file.Close() }()
 
-func selectLines(input ReadInput, contents []byte) ReadOutput {
-	allLines := strings.Split(string(contents), "\n")
-	startIndex := input.StartLine - 1
-	endIndex := min(input.EndLine, len(allLines))
-	if startIndex >= endIndex {
-		return ReadOutput{
-			Repo:      input.Repo,
-			Path:      input.Path,
-			StartLine: input.StartLine,
-			EndLine:   input.EndLine,
-			Lines:     []ReadLine{},
+	lines := make([]ReadLine, 0, endLine-startLine+1)
+	reader := bufio.NewReader(file)
+	lineNumber := 0
+	for {
+		text, readErr := reader.ReadString('\n')
+		if text == "" && readErr == io.EOF {
+			break
+		}
+		lineNumber++
+		if lineNumber >= startLine && lineNumber <= endLine {
+			lines = append(lines, ReadLine{Number: lineNumber, Text: truncateLine(strings.TrimSuffix(text, "\n"))})
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, 0, fmt.Errorf("read file: %w", readErr)
 		}
 	}
-	lines := make([]ReadLine, 0, endIndex-startIndex)
-	for index := startIndex; index < endIndex; index++ {
-		lines = append(lines, ReadLine{Number: index + 1, Text: allLines[index]})
+	return lines, lineNumber, nil
+}
+
+func truncateLine(text string) string {
+	if len(text) <= maxLineBytes {
+		return text
 	}
-	return ReadOutput{
-		Repo:      input.Repo,
-		Path:      input.Path,
-		StartLine: input.StartLine,
-		EndLine:   input.EndLine,
-		Lines:     lines,
+	cut := maxLineBytes
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
 	}
+	return text[:cut] + "…"
 }

@@ -18,13 +18,14 @@ const (
 	maximumResultSummary = 500
 )
 
-// WorkspaceExecutor invokes the fixed read-only Tool allowlist over Streamable HTTP.
+// WorkspaceExecutor invokes an allowlisted MCP Tool set over Streamable HTTP.
 type WorkspaceExecutor struct {
 	session *mcp.ClientSession
 	allowed map[string]struct{}
+	tools   map[string]*mcp.Tool
 }
 
-// NewWorkspaceExecutor connects to the Workspace MCP server and validates its Tool list.
+// NewWorkspaceExecutor connects to an MCP server and validates its Tool list.
 func NewWorkspaceExecutor(
 	ctx context.Context,
 	endpoint string,
@@ -38,16 +39,22 @@ func NewWorkspaceExecutor(
 		DisableStandaloneSSE: true,
 	}, nil)
 	if err != nil {
-		return nil, fmt.Errorf("connect Workspace MCP: %w", err)
+		return nil, fmt.Errorf("connect MCP server %s: %w", endpoint, err)
 	}
 	executor := &WorkspaceExecutor{session: session, allowed: asSet(allowedTools)}
 	if err := executor.validateTools(ctx); err != nil {
 		if closeErr := session.Close(); closeErr != nil {
-			return nil, errors.Join(err, fmt.Errorf("close Workspace MCP session: %w", closeErr))
+			return nil, errors.Join(err, fmt.Errorf("close MCP session: %w", closeErr))
 		}
 		return nil, err
 	}
 	return executor, nil
+}
+
+// AllowedTool returns the server-declared metadata for one allowlisted Tool.
+func (executor *WorkspaceExecutor) AllowedTool(name string) (*mcp.Tool, bool) {
+	tool, found := executor.tools[name]
+	return tool, found
 }
 
 // Call invokes one allowlisted Workspace Tool with a bounded request deadline.
@@ -94,16 +101,19 @@ func (executor *WorkspaceExecutor) Close() error {
 func (executor *WorkspaceExecutor) validateTools(ctx context.Context) error {
 	result, err := executor.session.ListTools(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("list Workspace MCP Tools: %w", err)
+		return fmt.Errorf("list MCP Tools: %w", err)
 	}
-	available := make(map[string]struct{}, len(result.Tools))
+	available := make(map[string]*mcp.Tool, len(result.Tools))
 	for _, tool := range result.Tools {
-		available[tool.Name] = struct{}{}
+		available[tool.Name] = tool
 	}
+	executor.tools = make(map[string]*mcp.Tool, len(executor.allowed))
 	for name := range executor.allowed {
-		if _, found := available[name]; !found {
-			return fmt.Errorf("Workspace MCP Tool %q is unavailable", name)
+		tool, found := available[name]
+		if !found {
+			return fmt.Errorf("MCP Tool %q is unavailable", name)
 		}
+		executor.tools[name] = tool
 	}
 	return nil
 }

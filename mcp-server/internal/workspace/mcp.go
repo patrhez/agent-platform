@@ -21,13 +21,47 @@ func NewMCPServer(service *Service) *mcp.Server {
 	}, newReadHandler(service))
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "code.search",
-		Description: "Find bounded literal text matches in an allowed repository.",
+		Description: "Find bounded literal or RE2 regular-expression matches in an allowed repository.",
 	}, newSearchHandler(service))
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "workspace.list_repositories",
 		Description: "List safe repository aliases available in the Workspace.",
 	}, newListRepositoriesHandler(service))
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "file.list",
+		Description: "List bounded directory entries in an allowed repository, or find files by name glob.",
+	}, newListEntriesHandler(service))
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "file.stat",
+		Description: "Return size and line-count metadata for a file, or confirm a directory exists, in an allowed repository.",
+	}, newStatHandler(service))
 	return server
+}
+
+func newStatHandler(service *Service) func(context.Context, *mcp.CallToolRequest, StatInput) (*mcp.CallToolResult, StatOutput, error) {
+	return func(context context.Context, _ *mcp.CallToolRequest, input StatInput) (*mcp.CallToolResult, StatOutput, error) {
+		startedAt := time.Now()
+		output, err := service.Stat(context, input)
+		if err != nil {
+			log.Printf("MCP Tool file.stat status=failed duration=%s error=%v", time.Since(startedAt).Round(time.Millisecond), err)
+			return errorResult(err), StatOutput{}, nil
+		}
+		log.Printf("MCP Tool file.stat status=succeeded duration=%s", time.Since(startedAt).Round(time.Millisecond))
+		return nil, output, nil
+	}
+}
+
+func newListEntriesHandler(service *Service) func(context.Context, *mcp.CallToolRequest, ListEntriesInput) (*mcp.CallToolResult, ListEntriesOutput, error) {
+	return func(context context.Context, _ *mcp.CallToolRequest, input ListEntriesInput) (*mcp.CallToolResult, ListEntriesOutput, error) {
+		startedAt := time.Now()
+		output, err := service.ListEntries(context, input)
+		if err != nil {
+			log.Printf("MCP Tool file.list status=failed duration=%s error=%v", time.Since(startedAt).Round(time.Millisecond), err)
+			return errorResult(err), ListEntriesOutput{}, nil
+		}
+		log.Printf("MCP Tool file.list status=succeeded duration=%s", time.Since(startedAt).Round(time.Millisecond))
+		return nil, output, nil
+	}
 }
 
 func newListRepositoriesHandler(service *Service) func(context.Context, *mcp.CallToolRequest, ListRepositoriesInput) (*mcp.CallToolResult, ListRepositoriesOutput, error) {

@@ -17,31 +17,6 @@ type safeToolEventPayload struct {
 	DurationMS int64          `json:"durationMs"`
 }
 
-func safeToolArguments(name string, raw json.RawMessage) map[string]any {
-	values := make(map[string]any)
-	if err := json.Unmarshal(raw, &values); err != nil {
-		return map[string]any{}
-	}
-	var allowed []string
-	switch name {
-	case "code.search":
-		allowed = []string{"repo", "query", "pathPrefix", "glob", "maxResults"}
-	case "file.read":
-		allowed = []string{"repo", "path", "startLine", "endLine"}
-	case "workspace.list_repositories":
-		return map[string]any{}
-	default:
-		return map[string]any{}
-	}
-	result := make(map[string]any, len(allowed))
-	for _, key := range allowed {
-		if value, found := values[key]; found {
-			result[key] = value
-		}
-	}
-	return result
-}
-
 func toolEventPayload(
 	event runtime.RuntimeEvent,
 	startedAt time.Time,
@@ -61,11 +36,15 @@ func toolEventPayload(
 			duration = 0
 		}
 	}
+	arguments := event.Tool.SafeArguments
+	if arguments == nil {
+		arguments = map[string]any{}
+	}
 	payload, err := json.Marshal(safeToolEventPayload{
 		ToolCallID: event.Tool.ID,
 		Tool:       event.Tool.Name,
 		Status:     status,
-		Arguments:  safeToolArguments(event.Tool.Name, event.Tool.Arguments),
+		Arguments:  arguments,
 		Result:     resultSummary,
 		DurationMS: duration,
 	})

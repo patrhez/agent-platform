@@ -16,13 +16,11 @@ import (
 	"github.com/patrhez/agent-platform/backend/internal/domain"
 )
 
-const systemPrompt = `You are a read-only troubleshooting Agent. Use only the available workspace_list_repositories, code_search, and file_read Tools. When the user does not supply a known repository alias, enumerate repositories before searching. Base conclusions on evidence with repository path and line references. Do not expose private reasoning. Your final answer must concisely state findings, evidence, likely cause, uncertainty, and the next investigation step.`
-
 // EinoRunner executes the configured Eino model with a durable, bounded ReAct loop.
 type EinoRunner struct {
 	definition Definition
 	model      model.ToolCallingChatModel
-	tools      []*schema.ToolInfo
+	connect    executorFactory
 }
 
 type checkpointState struct {
@@ -42,12 +40,7 @@ func NewEinoRunner(definition Definition, baseURL string, apiKey string) (*EinoR
 	if err != nil {
 		return nil, fmt.Errorf("create Eino OpenAI model: %w", err)
 	}
-	tools := workspaceToolInfos()
-	boundModel, err := chatModel.WithTools(tools)
-	if err != nil {
-		return nil, fmt.Errorf("bind Workspace Tools to Eino model: %w", err)
-	}
-	return &EinoRunner{definition: definition, model: boundModel, tools: tools}, nil
+	return &EinoRunner{definition: definition, model: chatModel, connect: newStreamableExecutor}, nil
 }
 
 func newToolCallingModel(
@@ -83,17 +76,23 @@ func (runner *EinoRunner) Run(
 		time.Duration(runner.definition.Agent.Limits.RunTimeoutSeconds)*time.Second,
 	)
 	defer cancel()
-	workspace, _ := runner.definition.WorkspaceServer()
-	executor, err := NewWorkspaceExecutor(runContext, workspace.URL, workspace.AllowedTools)
+	toolset, err := connectToolset(runContext, runner.definition.Agent.MCPServers, runner.connect)
 	if err != nil {
 		return Result{}, err
 	}
-	state, ordinal, err := restoreState(input, checkpoint)
+	boundModel, err := runner.model.WithTools(toolset.infos)
 	if err != nil {
-		return Result{}, closeExecutor(executor, err)
+		return Result{}, closeToolsetOnError(toolset, fmt.Errorf("bind MCP Tools to Eino model: %w", err))
 	}
-	result, runErr := runner.execute(runContext, input.RunID, input.Attempt, state, ordinal, executor, emit)
-	return result, closeExecutor(executor, runErr)
+	state, ordinal, err := restoreState(input, checkpoint, runner.definition.SystemPrompt)
+	if err != nil {
+		return Result{}, closeToolsetOnError(toolset, err)
+	}
+	result, runErr := runner.execute(runContext, input.RunID, input.Attempt, state, ordinal, boundModel, toolset, emit)
+	if closeErr := toolset.Close(); closeErr != nil && runErr == nil {
+		runErr = closeErr
+	}
+	return result, runErr
 }
 
 func (runner *EinoRunner) execute(
@@ -102,12 +101,13 @@ func (runner *EinoRunner) execute(
 	attempt int,
 	state checkpointState,
 	ordinal int,
-	executor ToolExecutor,
+	boundModel model.ToolCallingChatModel,
+	toolset *mcpToolset,
 	emit func(RuntimeEvent) error,
 ) (Result, error) {
 	for {
 		if hasPendingToolCalls(state.Messages) {
-			nextOrdinal, err := runner.executeTools(ctx, runID, &state, ordinal, executor, emit)
+			nextOrdinal, err := runner.executeTools(ctx, runID, &state, ordinal, toolset, emit)
 			if err != nil {
 				return Result{}, err
 			}
@@ -118,8 +118,9 @@ func (runner *EinoRunner) execute(
 			return Result{}, ErrStepLimit
 		}
 		stepNo := state.Iteration + 1
-		response, err := runner.streamModelResponse(
+		response, err := streamModelResponse(
 			ctx,
+			boundModel,
 			state.Messages,
 			fmt.Sprintf("%s:%d:%d", runID, attempt, stepNo),
 			attempt,
@@ -164,15 +165,16 @@ func (runner *EinoRunner) execute(
 	}
 }
 
-func (runner *EinoRunner) streamModelResponse(
+func streamModelResponse(
 	ctx context.Context,
+	boundModel model.ToolCallingChatModel,
 	messages []*schema.Message,
 	streamID string,
 	attempt int,
 	stepNo int,
 	emit func(RuntimeEvent) error,
 ) (*schema.Message, error) {
-	stream, err := runner.model.Stream(ctx, messages)
+	stream, err := boundModel.Stream(ctx, messages)
 	if err != nil {
 		return nil, fmt.Errorf("stream Agent response: %w", err)
 	}
@@ -247,13 +249,13 @@ func (runner *EinoRunner) executeTools(
 	runID string,
 	state *checkpointState,
 	ordinal int,
-	executor ToolExecutor,
+	toolset *mcpToolset,
 	emit func(RuntimeEvent) error,
 ) (int, error) {
 	lastMessage := state.Messages[len(state.Messages)-1]
 	for index := range lastMessage.ToolCalls {
 		call := &lastMessage.ToolCalls[index]
-		request, err := runner.toolRequest(runID, call)
+		request, binding, err := toolRequest(runID, call, toolset)
 		if err != nil {
 			return ordinal, err
 		}
@@ -265,7 +267,7 @@ func (runner *EinoRunner) executeTools(
 		}); err != nil {
 			return ordinal, err
 		}
-		result, err := callWithRetry(ctx, executor, request)
+		result, err := callWithRetry(ctx, binding.executor, request)
 		if err != nil {
 			return ordinal, err
 		}
@@ -293,16 +295,16 @@ func (runner *EinoRunner) executeTools(
 	return ordinal, nil
 }
 
-func (runner *EinoRunner) toolRequest(runID string, call *schema.ToolCall) (ToolRequest, error) {
-	mcpToolName, found := workspaceToolName(call.Function.Name)
+func toolRequest(runID string, call *schema.ToolCall, toolset *mcpToolset) (ToolRequest, toolBinding, error) {
+	binding, found := toolset.binding(call.Function.Name)
 	if !found {
-		return ToolRequest{}, fmt.Errorf("model requested non-allowlisted Tool %q", call.Function.Name)
+		return ToolRequest{}, toolBinding{}, fmt.Errorf("model requested non-allowlisted Tool %q", call.Function.Name)
 	}
 	if !json.Valid([]byte(call.Function.Arguments)) {
-		return ToolRequest{}, fmt.Errorf("model returned invalid JSON for Tool %s", call.Function.Name)
+		return ToolRequest{}, toolBinding{}, fmt.Errorf("model returned invalid JSON for Tool %s", call.Function.Name)
 	}
 	if call.ID == "" {
-		return ToolRequest{}, fmt.Errorf("model returned a Tool call without an ID")
+		return ToolRequest{}, toolBinding{}, fmt.Errorf("model returned a Tool call without an ID")
 	}
 	idempotencyKey := toolCallID(call)
 	if idempotencyKey == "" {
@@ -312,18 +314,20 @@ func (runner *EinoRunner) toolRequest(runID string, call *schema.ToolCall) (Tool
 		}
 		call.Extra["platform_tool_call_id"] = idempotencyKey
 	}
+	arguments := json.RawMessage(call.Function.Arguments)
 	return ToolRequest{
 		ID:             idempotencyKey,
 		IdempotencyKey: runID + ":" + idempotencyKey,
-		ServerKey:      "workspace",
-		Name:           mcpToolName,
-		Arguments:      json.RawMessage(call.Function.Arguments),
-	}, nil
+		ServerKey:      binding.serverKey,
+		Name:           binding.mcpName,
+		Arguments:      arguments,
+		SafeArguments:  safeArguments(arguments, binding.safeKeys),
+	}, binding, nil
 }
 
-func restoreState(input AgentInput, checkpoint *domain.Checkpoint) (checkpointState, int, error) {
+func restoreState(input AgentInput, checkpoint *domain.Checkpoint, systemPrompt string) (checkpointState, int, error) {
 	if checkpoint == nil {
-		messages, err := initialMessages(input)
+		messages, err := initialMessages(input, systemPrompt)
 		if err != nil {
 			return checkpointState{}, 0, err
 		}
@@ -342,9 +346,12 @@ func restoreState(input AgentInput, checkpoint *domain.Checkpoint) (checkpointSt
 	return state, checkpoint.Ordinal, nil
 }
 
-func initialMessages(input AgentInput) ([]*schema.Message, error) {
+func initialMessages(input AgentInput, systemPrompt string) ([]*schema.Message, error) {
 	if len(input.Messages) == 0 {
 		return nil, fmt.Errorf("Run %s has no Conversation messages", input.RunID)
+	}
+	if systemPrompt == "" {
+		return nil, fmt.Errorf("Run %s has no Skills-derived system prompt", input.RunID)
 	}
 	messages := make([]*schema.Message, 0, len(input.Messages)+1)
 	messages = append(messages, schema.SystemMessage(systemPrompt))
@@ -472,52 +479,3 @@ func toolCallID(call *schema.ToolCall) string {
 	return id
 }
 
-func workspaceToolName(modelToolName string) (string, bool) {
-	switch modelToolName {
-	case "code_search":
-		return "code.search", true
-	case "file_read":
-		return "file.read", true
-	case "workspace_list_repositories":
-		return "workspace.list_repositories", true
-	default:
-		return "", false
-	}
-}
-
-func closeExecutor(executor ToolExecutor, prior error) error {
-	if closeErr := executor.Close(); closeErr != nil {
-		if prior != nil {
-			return errors.Join(prior, closeErr)
-		}
-		return closeErr
-	}
-	return prior
-}
-
-func workspaceToolInfos() []*schema.ToolInfo {
-	return []*schema.ToolInfo{
-		workspaceToolInfo("workspace_list_repositories", "List repository aliases available in the Workspace.", map[string]*schema.ParameterInfo{}),
-		workspaceToolInfo("code_search", "Search a repository for literal source text.", map[string]*schema.ParameterInfo{
-			"repo":       {Type: schema.String, Desc: "Repository alias", Required: true},
-			"query":      {Type: schema.String, Desc: "Literal text to search", Required: true},
-			"pathPrefix": {Type: schema.String, Desc: "Optional repository-relative path prefix"},
-			"glob":       {Type: schema.String, Desc: "Optional basename glob filter"},
-			"maxResults": {Type: schema.Integer, Desc: "Number of matches from 1 to 50"},
-		}),
-		workspaceToolInfo("file_read", "Read a bounded line range from a repository file.", map[string]*schema.ParameterInfo{
-			"repo":      {Type: schema.String, Desc: "Repository alias", Required: true},
-			"path":      {Type: schema.String, Desc: "Repository-relative file path", Required: true},
-			"startLine": {Type: schema.Integer, Desc: "One-based first line", Required: true},
-			"endLine":   {Type: schema.Integer, Desc: "One-based last line", Required: true},
-		}),
-	}
-}
-
-func workspaceToolInfo(name string, description string, parameters map[string]*schema.ParameterInfo) *schema.ToolInfo {
-	return &schema.ToolInfo{
-		Name:        name,
-		Desc:        description,
-		ParamsOneOf: schema.NewParamsOneOfByParams(parameters),
-	}
-}
