@@ -1,0 +1,34 @@
+#!/usr/bin/env sh
+
+set -eu
+
+case "$1" in
+  info)
+    exit 0
+    ;;
+  compose)
+    case "${2:-}" in
+      version)
+        exit 0
+        ;;
+      up)
+		printf '%s\n' "$*" >> "$DOCKER_CALL_LOG"
+		exit 0
+		;;
+	  ps)
+		printf '%s\n' "fake-$4"
+		exit 0
+		;;
+	  down)
+		printf '%s\n' "$*" >> "$DOCKER_CALL_LOG"
+        exit 0
+        ;;
+    esac
+    ;;
+  inspect)
+    printf '%s\n' healthy
+    exit 0
+    ;;
+esac
+
+exit 1

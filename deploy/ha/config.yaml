@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-platform-config
+  namespace: agent-platform-ha
+data:
+  REDIS_URL: redis://host.k3d.internal:6379/0
+  WORKSPACE_MCP_URL: http://workspace-mcp:8081/mcp
+  AGENT_CONFIG_PATH: /etc/agent-platform/issue-troubleshooter.yaml
+  LOG_DIR: /tmp/agent-platform-logs
+  LOG_LEVEL: info
+  LOG_MAX_AGE_DAYS: "2"

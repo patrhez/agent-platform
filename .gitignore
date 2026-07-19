@@ -1,0 +1,48 @@
+# Operating system and editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Go build, test, and coverage output
+bin/
+*.exe
+*.test
+*.out
+.coverprofile
+coverage.out
+.gocache/
+.gomodcache/
+
+# Node.js / TypeScript dependencies and build output
+**/node_modules/
+**/dist/
+**/build/
+.next/
+.turbo/
+*.tsbuildinfo
+coverage/
+
+# Local runtime output
+*.log
+logs/
+tmp/
+.tmp/
+artifacts/
+*.sqlite
+*.sqlite3
+
+# Local Git worktrees
+.worktrees/
+
+# Host-local runtime files
+.local/

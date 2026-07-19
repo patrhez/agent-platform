@@ -1,0 +1,395 @@
+================================================================================
+Enterprise Troubleshooting Agent Platform
+Architecture Requirement Draft (v0.1)
+================================================================================
+
+Author:
+    Pengzheng He
+
+Goal
+--------------------------------------------------------------------------------
+
+Build an enterprise-grade AI Agent Platform.
+
+The first production Agent is an Issue Troubleshooting Agent for backend
+engineers.
+
+The architecture should be extensible so that future Agents can be created
+without changing backend code.
+
+The platform should not be tightly coupled with Eino.
+Eino is only the runtime implementation.
+
+================================================================================
+1. Project Goals
+================================================================================
+
+Primary Goal
+------------
+
+Provide an intelligent issue troubleshooting assistant capable of helping
+engineers investigate production problems across multiple repositories.
+
+The agent should be able to
+
+- understand user questions
+- analyze multiple repositories
+- call MCP tools
+- retrieve long-term memory
+- search internal wiki
+- execute shell commands
+- generate troubleshooting reports
+
+Secondary Goal
+--------------
+
+The platform itself should eventually become an Agent Platform.
+
+Future users should be able to create their own Agents by configuring:
+
+- System Prompt
+- Skills
+- Rules
+- MCP Servers
+- Memory
+- Workspace
+- Model
+
+without writing Go code.
+
+================================================================================
+2. Current Infrastructure
+================================================================================
+
+Available Infrastructure
+
+- MySQL
+- Redis
+- Kafka
+
+Existing Components
+
+- Internal LLM Gateway
+- MCP Server
+- Memory MCP Server
+
+These components already exist.
+
+The platform only needs to integrate with them.
+
+================================================================================
+3. Business Model
+================================================================================
+
+Users
+
+Multiple engineering teams share one deployment.
+
+Repositories
+
+Multiple Git repositories are mounted into one workspace.
+
+Repositories may or may not have dependencies.
+
+Example
+
+Workspace
+
+    repo-a
+    repo-b
+    repo-c
+    repo-d
+    repo-e
+
+Each troubleshooting conversation can analyze any repository.
+
+Conversation
+
+Each troubleshooting task starts a new Conversation.
+
+Users own their own Conversation list.
+
+Conversation stores
+
+- history
+- model
+- artifacts
+- reports
+
+Workspace
+
+Initially self-managed.
+
+Later can map to an existing enterprise Workspace Platform.
+
+The architecture should only depend on an abstraction instead of a concrete
+implementation.
+
+================================================================================
+4. Functional Requirements
+================================================================================
+
+Conversation
+
+- Conversation List
+- Create Conversation
+- Resume Conversation
+- Delete Conversation
+
+Streaming
+
+- Token streaming
+- Resume after browser refresh
+- Resume after reconnect
+
+Agent
+
+- Long-running Agent
+- Tool Calling
+- MCP Integration
+- Reflection
+- Checkpoint
+- Retry
+
+Workspace
+
+- Mounted Git repositories
+- Generated files
+- Logs
+- Temporary files
+
+Memory
+
+Memory is provided through the existing Memory MCP Server.
+
+The platform does not implement Memory itself.
+
+Skills
+
+Skills should be dynamically loaded.
+
+Rules
+
+Rules should be configurable per Agent.
+
+MCP
+
+The Runtime only contains an MCP Client.
+
+No business logic is implemented inside Runtime.
+
+================================================================================
+5. Non-functional Requirements
+================================================================================
+
+Horizontal Scaling
+
+Every service should be horizontally scalable.
+
+Stateless Runtime
+
+Agent Runtime must remain stateless.
+
+No in-memory Session.
+
+High Availability
+
+Node restart should not interrupt user conversations.
+
+Recoverability
+
+Long-running execution should support checkpoint recovery.
+
+Extensibility
+
+Future Agents should require configuration rather than development.
+
+================================================================================
+6. Proposed Core Objects
+================================================================================
+
+Agent
+
+Defines
+
+- Prompt
+- Skills
+- Rules
+- Workspace
+- MCP
+- Memory
+- Model
+
+Conversation
+
+Owned by User.
+
+Bound to exactly one Agent.
+
+Run
+
+Represents one execution.
+
+Checkpoint belongs to Run.
+
+Workspace
+
+Execution resource.
+
+Contains mounted repositories.
+
+Not a business object.
+
+================================================================================
+7. Initial Agent
+================================================================================
+
+Issue Troubleshooting Agent
+
+Capabilities
+
+- Code analysis
+- Repository search
+- Memory retrieval
+- Wiki retrieval
+- MCP tool calling
+- Report generation
+
+================================================================================
+8. Future Expansion
+================================================================================
+
+Possible future Agents
+
+- Emotion Support Agent
+- SQL Analysis Agent
+- Documentation Agent
+- Release Assistant
+- Architecture Review Agent
+
+The Runtime should remain unchanged.
+
+Only Agent configuration changes.
+
+================================================================================
+9. Industry Practices
+================================================================================
+
+The following architectural ideas appear consistently across recent enterprise
+Agent platforms.
+
+(1) Stateless Runtime
+
+Almost all production systems keep the Runtime stateless.
+
+Conversation, Memory and Checkpoints are externalized.
+
+Examples
+
+- Cloudflare Enterprise AI Workspace
+- NVIDIA Secure Agent Workspace
+- AWS Agent Layer
+
+------------------------------------------------------------
+
+(2) Agent Registry
+
+Modern platforms no longer hardcode Agents.
+
+They introduce an Agent Registry that stores
+
+- Prompt
+- Skills
+- MCP
+- Permissions
+- Metadata
+
+Examples
+
+- Microsoft Multi-Agent Reference Architecture
+- Google Agent Registry
+- Salesforce Agent Fabric
+
+------------------------------------------------------------
+
+(3) Workspace Isolation
+
+Execution happens inside an isolated Workspace.
+
+The Runtime coordinates resources but does not permanently own them.
+
+Examples
+
+- Cloudflare Enterprise Workspace
+- NVIDIA Secure Agent Workspace
+
+------------------------------------------------------------
+
+(4) MCP-first Tool Integration
+
+Enterprise platforms increasingly expose tools through MCP instead of embedding
+tool implementations inside the Runtime.
+
+The Runtime acts only as an MCP Client.
+
+------------------------------------------------------------
+
+(5) Versioned Skills
+
+Shared Skills should be centrally managed and versioned.
+
+Agents consume Skills instead of embedding all prompts.
+
+------------------------------------------------------------
+
+(6) Separation of Runtime and Platform
+
+Platform responsibilities
+
+- Conversation
+- Registry
+- Workspace
+- Permissions
+- Streaming
+
+Runtime responsibilities
+
+- Planning
+- Tool Calling
+- Reflection
+- Streaming Tokens
+
+------------------------------------------------------------
+
+(7) Future-proof Architecture
+
+Runtime should not know
+
+- business type
+- repository structure
+- memory implementation
+- MCP implementation
+
+Everything should be injected through configuration.
+
+================================================================================
+10. Current Design Principles
+================================================================================
+
+Runtime is Stateless.
+
+Conversation belongs to User.
+
+Agent is Configuration.
+
+Workspace is Resource.
+
+Memory is External.
+
+MCP is External.
+
+Skills are Versioned.
+
+Everything is Replaceable.
+
+================================================================================

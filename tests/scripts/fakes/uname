@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+
+if [ "${1:-}" = "-s" ]; then
+  printf '%s\n' "Darwin"
+  exit 0
+fi
+
+exit 1

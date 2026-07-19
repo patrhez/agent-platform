@@ -1,0 +1,55 @@
+#!/usr/bin/env sh
+
+set -eu
+
+case "$1" in
+  info)
+    test -f "$PODMAN_MACHINE_STATE"
+    exit $?
+    ;;
+  machine)
+    case "$2" in
+      inspect)
+        test -f "$PODMAN_MACHINE_CREATED"
+        exit $?
+        ;;
+      init)
+        : > "$PODMAN_MACHINE_CREATED"
+        printf '%s\n' "$*" >> "$PODMAN_CALL_LOG"
+        exit 0
+        ;;
+      start)
+        : > "$PODMAN_MACHINE_STATE"
+        printf '%s\n' "$*" >> "$PODMAN_CALL_LOG"
+        exit 0
+        ;;
+    esac
+    ;;
+  compose)
+    shift
+    if [ "${1:-}" = "--env-file" ]; then shift 2; fi
+    if [ "${1:-}" = "version" ]; then
+      test -f "$PODMAN_MACHINE_STATE"
+      exit 0
+    fi
+
+    if [ "${1:-}" = "up" ]; then
+      printf 'compose %s\n' "$*" >> "$PODMAN_CALL_LOG"
+      exit 0
+    fi
+    if [ "${1:-}" = "down" ]; then
+      printf 'compose %s\n' "$*" >> "$PODMAN_CALL_LOG"
+      exit 0
+    fi
+    if [ "${1:-}" = "ps" ]; then
+      printf '%s\n' "fake-${3:-service}"
+      exit 0
+    fi
+    ;;
+  inspect)
+    printf '%s\n' healthy
+    exit 0
+    ;;
+esac
+
+exit 1

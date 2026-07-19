@@ -1,0 +1,6 @@
+.git
+.gocache
+.gomodcache
+.env
+web/node_modules
+web/dist

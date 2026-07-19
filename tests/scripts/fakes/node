@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+if [ "${1:-}" = "-p" ]; then
+  printf '%s\n' "22.14.0"
+fi
+
+exit 0

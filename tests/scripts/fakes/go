@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+
+set -eu
+if [ "${1:-}" = "version" ]; then
+  printf '%s\n' "go version go1.25.0 darwin/arm64"
+  exit 0
+fi
+printf '%s\n' "$*" >> "$GO_CALL_LOG"
+if [ -n "${GO_ENV_LOG:-}" ]; then
+  printf '%s|%s|%s\n' "${GOMODCACHE:-}" "${GOCACHE:-}" "$*" >> "$GO_ENV_LOG"
+fi
+
+output=""
+previous=""
+for argument in "$@"; do
+  if [ "$previous" = "-o" ]; then
+    output="$argument"
+    break
+  fi
+  previous="$argument"
+done
+if [ -n "$output" ]; then
+  mkdir -p "$(dirname "$output")"
+  printf '#!/usr/bin/env sh\nexit 0\n' > "$output"
+  chmod +x "$output"
+fi

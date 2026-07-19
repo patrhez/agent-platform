@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+
+if [ -n "${CURL_ENV_LOG:-}" ]; then
+  printf '%s|%s\n' "${NO_PROXY:-}" "${no_proxy:-}" >> "$CURL_ENV_LOG"
+fi
+
+exit 0

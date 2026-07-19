@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: database-migrate
+  namespace: agent-platform-ha
+  labels:
+    app.kubernetes.io/part-of: agent-platform
+    app.kubernetes.io/component: migrate
+spec:
+  ttlSecondsAfterFinished: 30
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: agent-platform
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: agent-platform-migrate:ha
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: agent-platform-runtime

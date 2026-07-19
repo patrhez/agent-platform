@@ -1,0 +1,16 @@
+agent:
+  id: issue-troubleshooter
+  version: 2026-07-17.1
+  runtime: eino-react
+  model:
+    api_mode: chat_completions
+    model: ${LLM_MODEL}
+    temperature: 0.1
+  limits:
+    max_steps: 12
+    run_timeout_seconds: 600
+  mcp_servers:
+    - key: workspace
+      url: ${WORKSPACE_MCP_URL}
+      allowed_tools: [workspace.list_repositories, code.search, file.read]
+  skills_bundle_version: 2026-07-17.1

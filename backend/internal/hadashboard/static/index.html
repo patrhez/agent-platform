@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Platform · HA Lab</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">LOCAL K3D OBSERVATORY</p>
+          <h1>Agent Platform HA Lab</h1>
+          <p class="subtitle">Observe pods, stream live logs, and inject faults into selected API / Worker pods.</p>
+        </div>
+        <div class="cluster-state">
+          <span id="cluster-dot" class="dot waiting"></span>
+          <div><strong id="cluster-label">Connecting</strong><small id="observed-at">—</small></div>
+        </div>
+      </header>
+
+      <section id="summary" class="summary"></section>
+
+      <section class="workspace">
+        <div class="panel pods-panel">
+          <div class="panel-heading">
+            <div><span class="kicker">TOPOLOGY</span><h2>Pod status</h2></div>
+            <button id="refresh" class="secondary">Refresh now</button>
+          </div>
+          <div id="error" class="alert hidden"></div>
+          <div id="pods" class="pods"></div>
+        </div>
+
+        <div class="panel logs-panel">
+          <div class="panel-heading">
+            <div><span class="kicker">OBSERVABILITY</span><h2 id="log-title">Select a Pod to view logs</h2></div>
+            <label class="auto-refresh"><input id="auto-refresh" type="checkbox" checked /> Auto-refresh</label>
+          </div>
+          <pre id="logs">No Pod selected.</pre>
+        </div>
+      </section>
+
+      <section class="panel timeline-panel">
+        <div class="panel-heading"><div><span class="kicker">EXPERIMENT</span><h2>Experiment log</h2></div></div>
+        <ol id="timeline"><li><time>—</time><span>Waiting to start the HA experiment.</span></li></ol>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
