@@ -11,11 +11,11 @@ agent:
     run_timeout_seconds: 600
   context:
     summarization:
-      enabled: false
+      enabled: true
       context_tokens: 120000
       context_messages: 0
     reduction:
-      enabled: false
+      enabled: true
       max_tokens_for_clear: 80000
       max_length_for_trunc: 32000
       skip_offload: true
