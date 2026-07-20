@@ -402,7 +402,7 @@ Allowlist is also enforced on the Worker/runtime side from Agent YAML (`allowed_
 ```text
 Frontend     Conversation snapshot + SSE consumer + draft assembly
 API          Auth, CRUD, SSE replay from MySQL, Redis subscribe (hint)
-Worker       Lease Run, Eino ReAct, MCP tools, persist boundaries, Redis publish
+Worker       Lease Run, Eino ADK ReAct (via AgentRunner), MCP tools, persist boundaries, Redis publish
 MySQL        Authoritative Conversations / Messages / Runs / Events / Checkpoints
 Redis        Pub/Sub doorbell only (channel per runID)
 Workspace MCP  Read-only FS tools behind MCP HTTP
@@ -410,12 +410,25 @@ Workspace MCP  Read-only FS tools behind MCP HTTP
 
 ## 10. Is `assistant.delta` from Eino or this platform?
 
-**This platform.** Eino exposes model streaming as `schema.StreamReader[*schema.Message]` chunks. The platform maps those chunks into its own durable event types:
+**This platform.** Eino ADK streams model output as `AgentEvent` message streams (`schema.StreamReader[*schema.Message]` chunks). The runtime adapter maps those chunks into platform durable event types:
 
 - runtime: `AssistantStreamEvent{Phase: "started"|"delta", ...}`
 - persisted/SSE: `assistant.started` / `assistant.delta` / `assistant.completed`
 
 Eino does not define the string `assistant.delta`.
+
+## 10b. Does the runtime use Eino ADK? What about context compression?
+
+**Yes (adapter pattern).** `EinoRunner` still implements `AgentRunner`, but the ReAct loop is `adk.ChatModelAgent` + event mapping. Worker / PersistBoundary / platform JSON Checkpoints / queue-steer cancel stay platform-owned. ADK `CheckPointStore` is not used as resume truth.
+
+Optional Agent YAML `context` middlewares:
+
+| Middleware | Role |
+|---|---|
+| `reduction` | Trim/clear large or old **tool results** before the next model call |
+| `summarization` | LLM **conversation compact** when token/message thresholds fire |
+
+Defaults in `issue-troubleshooter.yaml` are `enabled: false`. When enabled, later Checkpoints store the rewritten (compressed) message list; earlier Trace rows and Conversation Messages are not rewritten. Steer/Stop remain Conversation-level cancel + new Run — not same-Run ADK Interrupt.
 
 ## 11. If Run1 never finishes, what happens to Run2/Run3 SSE?
 

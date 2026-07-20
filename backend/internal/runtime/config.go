@@ -19,13 +19,14 @@ type Definition struct {
 
 // AgentDefinition contains the model, limits, and MCP allowlist for one Agent.
 type AgentDefinition struct {
-	ID                  string          `yaml:"id"`
-	Version             string          `yaml:"version"`
-	Runtime             string          `yaml:"runtime"`
-	Model               ModelDefinition `yaml:"model"`
-	Limits              LimitDefinition `yaml:"limits"`
-	MCPServers          []MCPServer     `yaml:"mcp_servers"`
-	SkillsBundleVersion string          `yaml:"skills_bundle_version"`
+	ID                  string            `yaml:"id"`
+	Version             string            `yaml:"version"`
+	Runtime             string            `yaml:"runtime"`
+	Model               ModelDefinition   `yaml:"model"`
+	Limits              LimitDefinition   `yaml:"limits"`
+	Context             ContextDefinition `yaml:"context"`
+	MCPServers          []MCPServer       `yaml:"mcp_servers"`
+	SkillsBundleVersion string            `yaml:"skills_bundle_version"`
 }
 
 // ModelDefinition selects the LLM gateway interface and model settings.
@@ -39,6 +40,33 @@ type ModelDefinition struct {
 type LimitDefinition struct {
 	MaxSteps          int `yaml:"max_steps"`
 	RunTimeoutSeconds int `yaml:"run_timeout_seconds"`
+}
+
+// ContextDefinition configures optional ADK context middlewares.
+type ContextDefinition struct {
+	Summarization SummarizationDefinition `yaml:"summarization"`
+	Reduction     ReductionDefinition     `yaml:"reduction"`
+}
+
+// SummarizationDefinition configures conversation compact middleware.
+type SummarizationDefinition struct {
+	Enabled bool `yaml:"enabled"`
+	// ContextTokens triggers compact when estimated tokens exceed this value.
+	// Zero with Enabled leaves the Eino library default (~160k).
+	ContextTokens int `yaml:"context_tokens"`
+	// ContextMessages triggers compact when message count exceeds this value.
+	// Zero disables the message-count trigger.
+	ContextMessages int `yaml:"context_messages"`
+}
+
+// ReductionDefinition configures tool-result trim/clear middleware.
+type ReductionDefinition struct {
+	Enabled           bool `yaml:"enabled"`
+	MaxTokensForClear int  `yaml:"max_tokens_for_clear"`
+	MaxLengthForTrunc int  `yaml:"max_length_for_trunc"`
+	// SkipOffload clears tool results in-place without a Worker-local Backend.
+	// Must stay true while Workspace access remains MCP-only.
+	SkipOffload bool `yaml:"skip_offload"`
 }
 
 // MCPServer defines one remote MCP server available to an Agent.
@@ -138,10 +166,30 @@ func (definition Definition) Validate() error {
 	if agent.Limits.MaxSteps < 1 || agent.Limits.RunTimeoutSeconds < 1 {
 		return fmt.Errorf("invalid Agent execution limits")
 	}
+	if err := validateContext(agent.Context); err != nil {
+		return err
+	}
 	if agent.SkillsBundleVersion == "" {
 		return fmt.Errorf("skills_bundle_version is required")
 	}
 	return validateMCPServers(agent.MCPServers)
+}
+
+func validateContext(contextConfig ContextDefinition) error {
+	if contextConfig.Summarization.Enabled {
+		if contextConfig.Summarization.ContextTokens < 0 || contextConfig.Summarization.ContextMessages < 0 {
+			return fmt.Errorf("summarization thresholds must be non-negative")
+		}
+	}
+	if contextConfig.Reduction.Enabled {
+		if contextConfig.Reduction.MaxTokensForClear < 0 || contextConfig.Reduction.MaxLengthForTrunc < 0 {
+			return fmt.Errorf("reduction thresholds must be non-negative")
+		}
+		if !contextConfig.Reduction.SkipOffload {
+			return fmt.Errorf("reduction.skip_offload must be true while tool offload uses MCP-only Workspace access")
+		}
+	}
+	return nil
 }
 
 func validateMCPServers(servers []MCPServer) error {

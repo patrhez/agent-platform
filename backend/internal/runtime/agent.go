@@ -48,7 +48,11 @@ type AssistantStreamEvent struct {
 
 // ToolRequest is an allowlisted MCP invocation requested by the model.
 type ToolRequest struct {
-	ID             string
+	// ID is the platform durable ToolCall primary key (ULID, char(26)).
+	ID string
+	// CallID is the provider tool_call_id used to pair ToolMessages with the
+	// assistant tool_calls entry. It may exceed char(26); empty means use ID.
+	CallID         string
 	IdempotencyKey string
 	ServerKey      string
 	Name           string
@@ -56,6 +60,14 @@ type ToolRequest struct {
 	// SafeArguments contains only the argument keys allowlisted for
 	// user-visible events and logs.
 	SafeArguments map[string]any
+}
+
+// ToolMessageCallID returns the id that must appear on schema.ToolMessage.
+func (request ToolRequest) ToolMessageCallID() string {
+	if request.CallID != "" {
+		return request.CallID
+	}
+	return request.ID
 }
 
 // ToolResult is the safe model-facing result of one MCP Tool invocation.

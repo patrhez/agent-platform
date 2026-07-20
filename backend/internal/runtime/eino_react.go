@@ -16,7 +16,7 @@ import (
 	"github.com/patrhez/agent-platform/backend/internal/domain"
 )
 
-// EinoRunner executes the configured Eino model with a durable, bounded ReAct loop.
+// EinoRunner executes one Agent Run through Eino ADK behind the AgentRunner boundary.
 type EinoRunner struct {
 	definition Definition
 	model      model.ToolCallingChatModel
@@ -80,15 +80,11 @@ func (runner *EinoRunner) Run(
 	if err != nil {
 		return Result{}, err
 	}
-	boundModel, err := runner.model.WithTools(toolset.infos)
-	if err != nil {
-		return Result{}, closeToolsetOnError(toolset, fmt.Errorf("bind MCP Tools to Eino model: %w", err))
-	}
 	state, ordinal, err := restoreState(input, checkpoint, runner.definition.SystemPrompt)
 	if err != nil {
 		return Result{}, closeToolsetOnError(toolset, err)
 	}
-	result, runErr := runner.execute(runContext, input.RunID, input.Attempt, state, ordinal, boundModel, toolset, emit)
+	result, runErr := runner.execute(runContext, input.RunID, input.Attempt, state, ordinal, toolset, emit)
 	if closeErr := toolset.Close(); closeErr != nil && runErr == nil {
 		runErr = closeErr
 	}
@@ -101,68 +97,22 @@ func (runner *EinoRunner) execute(
 	attempt int,
 	state checkpointState,
 	ordinal int,
-	boundModel model.ToolCallingChatModel,
 	toolset *mcpToolset,
 	emit func(RuntimeEvent) error,
 ) (Result, error) {
-	for {
-		if hasPendingToolCalls(state.Messages) {
-			nextOrdinal, err := runner.executeTools(ctx, runID, &state, ordinal, toolset, emit)
-			if err != nil {
-				return Result{}, err
-			}
-			ordinal = nextOrdinal
-			continue
-		}
-		if state.Iteration >= runner.definition.Agent.Limits.MaxSteps {
-			return Result{}, ErrStepLimit
-		}
-		stepNo := state.Iteration + 1
-		response, err := streamModelResponse(
-			ctx,
-			boundModel,
-			state.Messages,
-			fmt.Sprintf("%s:%d:%d", runID, attempt, stepNo),
-			attempt,
-			stepNo,
-			emit,
-		)
+	// Resume may land after an assistant tool_calls message and before tool results.
+	// Drain those with the platform tool path before handing control to ADK.
+	for hasPendingToolCalls(state.Messages) {
+		nextOrdinal, err := runner.executeTools(ctx, runID, &state, ordinal, toolset, emit)
 		if err != nil {
 			return Result{}, err
 		}
-		state.Iteration++
-		response = sanitizeAssistantMessage(response)
-		state.Messages = append(state.Messages, response)
-		if len(response.ToolCalls) == 0 {
-			checkpoint, err := newCheckpoint(runID, ordinal+1, state)
-			if err != nil {
-				return Result{}, err
-			}
-			if err := emit(RuntimeEvent{
-				StepNo:     state.Iteration,
-				Kind:       "model",
-				Summary:    "Agent produced its final troubleshooting report",
-				Final:      response.Content,
-				Checkpoint: checkpoint,
-			}); err != nil {
-				return Result{}, err
-			}
-			return Result{Final: response.Content}, nil
-		}
-		checkpoint, err := newCheckpoint(runID, ordinal+1, state)
-		if err != nil {
-			return Result{}, err
-		}
-		ordinal++
-		if err := emit(RuntimeEvent{
-			StepNo:     state.Iteration,
-			Kind:       "model",
-			Summary:    "Agent selected read-only repository Tools",
-			Checkpoint: checkpoint,
-		}); err != nil {
-			return Result{}, err
-		}
+		ordinal = nextOrdinal
 	}
+	if state.Iteration >= runner.definition.Agent.Limits.MaxSteps {
+		return Result{}, ErrStepLimit
+	}
+	return runner.runWithADK(ctx, runID, attempt, state, ordinal, toolset, emit)
 }
 
 func streamModelResponse(
@@ -478,4 +428,3 @@ func toolCallID(call *schema.ToolCall) string {
 	id, _ := value.(string)
 	return id
 }
-

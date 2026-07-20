@@ -113,3 +113,93 @@ func TestValidateRejectsSafeArgumentsForUnknownTool(t *testing.T) {
 		t.Fatal("Validate() error = nil, want unknown safe_arguments Tool")
 	}
 }
+
+func TestValidateRejectsReductionWithoutSkipOffload(t *testing.T) {
+	definition := Definition{Agent: AgentDefinition{
+		ID:      "test",
+		Version: "v1",
+		Runtime: Name,
+		Model:   ModelDefinition{APIMode: "chat_completions", Model: "m"},
+		Limits:  LimitDefinition{MaxSteps: 5, RunTimeoutSeconds: 60},
+		Context: ContextDefinition{
+			Reduction: ReductionDefinition{Enabled: true, SkipOffload: false},
+		},
+		MCPServers: []MCPServer{{
+			Key:          "one",
+			URL:          "http://one",
+			AllowedTools: []string{"code.search"},
+		}},
+		SkillsBundleVersion: "v1",
+	}}
+	if err := definition.Validate(); err == nil {
+		t.Fatal("Validate() error = nil, want skip_offload requirement")
+	}
+}
+
+func TestValidateRejectsNegativeSummarizationThreshold(t *testing.T) {
+	definition := Definition{Agent: AgentDefinition{
+		ID:      "test",
+		Version: "v1",
+		Runtime: Name,
+		Model:   ModelDefinition{APIMode: "chat_completions", Model: "m"},
+		Limits:  LimitDefinition{MaxSteps: 5, RunTimeoutSeconds: 60},
+		Context: ContextDefinition{
+			Summarization: SummarizationDefinition{Enabled: true, ContextTokens: -1},
+		},
+		MCPServers: []MCPServer{{
+			Key:          "one",
+			URL:          "http://one",
+			AllowedTools: []string{"code.search"},
+		}},
+		SkillsBundleVersion: "v1",
+	}}
+	if err := definition.Validate(); err == nil {
+		t.Fatal("Validate() error = nil, want negative summarization threshold error")
+	}
+}
+
+func TestLoadDefinitionParsesContextMiddlewareConfig(t *testing.T) {
+	directory := t.TempDir()
+	definitionPath := filepath.Join(directory, "agent.yaml")
+	writeFile(t, definitionPath, `agent:
+  id: test-agent
+  version: 2026-07-19.1
+  runtime: eino-react
+  model:
+    api_mode: chat_completions
+    model: ${LLM_MODEL}
+    temperature: 0.1
+  limits:
+    max_steps: 10
+    run_timeout_seconds: 60
+  context:
+    summarization:
+      enabled: true
+      context_tokens: 1000
+      context_messages: 8
+    reduction:
+      enabled: true
+      max_tokens_for_clear: 500
+      max_length_for_trunc: 200
+      skip_offload: true
+  mcp_servers:
+    - key: workspace
+      url: ${WORKSPACE_MCP_URL}
+      allowed_tools: [code.search]
+      safe_arguments:
+        code.search: [repo, query]
+  skills_bundle_version: v1
+`)
+	writeFile(t, filepath.Join(directory, "skills", "v1", "10-base.md"), "Base skill.\n")
+
+	definition, err := LoadDefinition(definitionPath, "http://workspace:8081/mcp", "model-x")
+	if err != nil {
+		t.Fatalf("LoadDefinition() error = %v", err)
+	}
+	if !definition.Agent.Context.Summarization.Enabled || definition.Agent.Context.Summarization.ContextTokens != 1000 {
+		t.Fatalf("summarization = %#v", definition.Agent.Context.Summarization)
+	}
+	if !definition.Agent.Context.Reduction.Enabled || !definition.Agent.Context.Reduction.SkipOffload {
+		t.Fatalf("reduction = %#v", definition.Agent.Context.Reduction)
+	}
+}
