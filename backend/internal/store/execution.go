@@ -417,17 +417,7 @@ func advanceExecutableRun(
 	transaction *query.Query,
 	conversation *model.Conversation,
 ) error {
-	now := time.Now().UTC()
-	_, err := transaction.Conversation.WithContext(context).
-		Where(transaction.Conversation.ID.Eq(conversation.ID)).
-		UpdateSimple(
-			transaction.Conversation.NextExecutableRunSeq.Value(conversation.NextExecutableRunSeq+1),
-			transaction.Conversation.UpdatedAt.Value(now),
-		)
-	if err != nil {
-		return fmt.Errorf("advance executable Run sequence: %w", err)
-	}
-	return nil
+	return realignExecutableRunSeq(context, transaction, conversation)
 }
 
 // IsCancellationRequested reports whether a Run has an outstanding cancellation request.

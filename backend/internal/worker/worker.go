@@ -121,6 +121,13 @@ func (worker *Worker) Execute(ctx context.Context, run domain.Run) error {
 		zap.String("worker_id", worker.workerID),
 		zap.Int("attempt", run.Attempt),
 	)
+	cancelled, err := worker.store.IsCancellationRequested(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	if cancelled {
+		return worker.completeFailure(ctx, run, runtime.ErrRunCancelled)
+	}
 	execution, err := worker.store.LoadRunExecution(ctx, run.ID, run.ExecutionToken)
 	if err != nil {
 		return err

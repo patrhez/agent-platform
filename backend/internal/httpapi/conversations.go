@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/oklog/ulid/v2"
 	"github.com/patrhez/agent-platform/backend/internal/domain"
 	"github.com/patrhez/agent-platform/backend/internal/logging"
+	"go.uber.org/zap"
 )
 
 const maxRequestBodyBytes = 1 << 20
@@ -30,6 +32,7 @@ type createConversationResponse struct {
 type createMessageRequest struct {
 	Content         string `json:"content"`
 	ClientMessageID string `json:"clientMessageId"`
+	Mode            string `json:"mode"`
 }
 
 type createMessageResponse struct {
@@ -149,16 +152,46 @@ func (server *Server) createMessage(responseWriter http.ResponseWriter, request 
 		)
 		return
 	}
-	run, err := server.store.CreateUserMessageAndRunForUser(
-		ctx, principal.UserID(), request.PathValue("conversationID"), clientMessageID, content, server.pins,
+	mode, err := domain.ParseFollowUpMode(body.Mode)
+	if err != nil {
+		writeError(ctx, server.logger, responseWriter, http.StatusBadRequest, "invalid_mode", err)
+		return
+	}
+	run, events, err := server.store.CreateUserMessageAndRunForUser(
+		ctx, principal.UserID(), request.PathValue("conversationID"), clientMessageID, content, mode, server.pins,
 	)
 	if err != nil {
 		writeStoreError(ctx, server.logger, responseWriter, err)
 		return
 	}
+	server.publishRunEvents(ctx, events)
 	writeJSON(ctx, server.logger, responseWriter, http.StatusAccepted, createMessageResponse{
 		MessageID: run.TriggerMessageID, RunID: run.ID, Status: string(run.Status),
 	})
+}
+
+func (server *Server) cancelActiveRuns(responseWriter http.ResponseWriter, request *http.Request) {
+	ctx := request.Context()
+	principal, err := requestPrincipal(ctx)
+	if err != nil {
+		writeError(ctx, server.logger, responseWriter, http.StatusUnauthorized, "unauthenticated", err)
+		return
+	}
+	events, err := server.store.CancelActiveRuns(ctx, principal.UserID(), request.PathValue("conversationID"))
+	if err != nil {
+		writeStoreError(ctx, server.logger, responseWriter, err)
+		return
+	}
+	server.publishRunEvents(ctx, events)
+	writeJSON(ctx, server.logger, responseWriter, http.StatusOK, map[string]any{"cancelled": true})
+}
+
+func (server *Server) publishRunEvents(ctx context.Context, events []domain.RunEvent) {
+	for _, event := range events {
+		if err := server.notifier.Publish(ctx, event.RunID, event.Seq); err != nil {
+			server.logger.Warn(ctx, "publish Run event hint failed", zap.String("run_id", event.RunID), zap.Error(err))
+		}
+	}
 }
 
 func validClientMessageID(value string) bool {

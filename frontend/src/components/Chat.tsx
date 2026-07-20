@@ -1,17 +1,21 @@
-import { useState } from "react";
-import type { Message, Run } from "../api/client";
+import { useEffect, useState } from "react";
+import type { FollowUpMode, Message, Run } from "../api/client";
 import type { RunEvent } from "../api/events";
 import type { AssistantDraft } from "../state/conversation";
 import { MarkdownContent } from "./MarkdownContent";
 import { RunStatus } from "./RunStatus";
 import { RunTrace } from "./RunTrace";
 
+const followUpModeKey = "agent-platform.followUpMode";
+
 type ChatProps = {
   messages: Message[];
   runs: Run[];
   eventsByRunID?: Record<string, RunEvent[]>;
   draft?: AssistantDraft;
-  onSend: (content: string) => Promise<void>;
+  busy?: boolean;
+  onSend: (content: string, mode: FollowUpMode) => Promise<void>;
+  onStop?: () => Promise<void>;
 };
 
 type Turn = {
@@ -20,13 +24,30 @@ type Turn = {
   assistants: Message[];
 };
 
-export function Chat({ messages, runs, eventsByRunID = {}, draft, onSend }: ChatProps) {
+export function Chat({
+  messages,
+  runs,
+  eventsByRunID = {},
+  draft,
+  busy = false,
+  onSend,
+  onStop,
+}: ChatProps) {
   const [content, setContent] = useState("");
-  const sending = runs.some((run) => run.status === "queued" || run.status === "running");
+  const [mode, setMode] = useState<FollowUpMode>(readFollowUpMode);
+  const active = runs.some((run) => ["queued", "running", "waiting"].includes(run.status));
   const turns = buildTurns(messages, runs);
   const draftAttached = draft
     ? turns.some((turn) => turn.run?.id === draft.runID)
     : false;
+
+	useEffect(() => {
+		try {
+			window.localStorage.setItem(followUpModeKey, mode);
+		} catch {
+			// Ignore storage failures in restricted environments.
+		}
+	}, [mode]);
 
   return <main>
     <div className="messages">
@@ -70,19 +91,54 @@ export function Chat({ messages, runs, eventsByRunID = {}, draft, onSend }: Chat
     </div>
     <form onSubmit={(event) => {
       event.preventDefault();
-      if (content.trim()) {
-        void onSend(content.trim());
-        setContent("");
-      }
+      if (!content.trim() || busy) return;
+      const next = content.trim();
+      setContent("");
+      void onSend(next, mode);
     }}>
       <textarea
         value={content}
         onChange={(event) => setContent(event.target.value)}
         placeholder="Describe the issue to investigate"
+        disabled={busy}
       />
-      <button disabled={sending}>Send</button>
+      <div className="composer-actions">
+        <div className="follow-up-mode" role="group" aria-label="Follow-up mode">
+          <button
+            type="button"
+            className={mode === "queue" ? "selected" : undefined}
+            aria-pressed={mode === "queue"}
+            disabled={busy}
+            onClick={() => setMode("queue")}
+          >
+            Queue
+          </button>
+          <button
+            type="button"
+            className={mode === "steer" ? "selected" : undefined}
+            aria-pressed={mode === "steer"}
+            disabled={busy}
+            onClick={() => setMode("steer")}
+          >
+            Steer
+          </button>
+        </div>
+        {active && onStop && <button type="button" className="stop" disabled={busy} onClick={() => void onStop()}>
+          Stop
+        </button>}
+        <button type="submit" disabled={busy || !content.trim()}>Send</button>
+      </div>
     </form>
   </main>;
+}
+
+function readFollowUpMode(): FollowUpMode {
+  try {
+    const value = window.localStorage.getItem(followUpModeKey);
+    return value === "steer" ? "steer" : "queue";
+  } catch {
+    return "queue";
+  }
 }
 
 function buildTurns(messages: Message[], runs: Run[]): Turn[] {

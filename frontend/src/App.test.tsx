@@ -10,6 +10,7 @@ vi.mock("./api/client", () => ({
     getConversation: vi.fn(),
     createConversation: vi.fn(),
     sendMessage: vi.fn(),
+    cancelActive: vi.fn(),
     getTrace: vi.fn(),
     cancelRun: vi.fn(),
   },

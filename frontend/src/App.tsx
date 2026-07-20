@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState } from "react";
-import { api, type Conversation } from "./api/client";
+import { api, type Conversation, type FollowUpMode } from "./api/client";
 import { subscribeToRun } from "./api/events";
 import { activeRuns, applyEvent, assistantDraft, initialState, runEvents } from "./state/conversation";
 import { Chat } from "./components/Chat";
@@ -11,6 +11,7 @@ export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeID, setActiveID] = useState<string>();
   const [drafting, setDrafting] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [state, dispatch] = useReducer(applyEvent, initialState);
   const [error, setError] = useState("");
 
@@ -54,7 +55,9 @@ export default function App() {
     setError("");
   };
 
-  const send = async (content: string) => {
+  const send = async (content: string, mode: FollowUpMode) => {
+    setBusy(true);
+    setError("");
     try {
       if (drafting || !activeID) {
         const created = await api.createConversation(content);
@@ -62,10 +65,26 @@ export default function App() {
         await loadConversation(created.conversation.id);
         return;
       }
-      await api.sendMessage(activeID, content, newClientMessageID());
+      await api.sendMessage(activeID, content, newClientMessageID(), mode);
       await loadConversation(activeID);
     } catch (cause) {
       setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const stop = async () => {
+    if (!activeID) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.cancelActive(activeID);
+      await loadConversation(activeID);
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -93,7 +112,9 @@ export default function App() {
           runs={visibleDetail?.runs ?? []}
           eventsByRunID={eventsByRunID}
           draft={draft}
+          busy={busy}
           onSend={send}
+          onStop={activeID ? stop : undefined}
         />
       </section>
     </div>

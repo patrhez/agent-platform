@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Message, type Run } from "../api/client";
 import type { AssistantDraft } from "../state/conversation";
@@ -36,9 +36,22 @@ const run: Run = {
   finishedAt: "2026-07-18T00:00:01.000Z",
 };
 
+const running: Run = {
+  ...run,
+  status: "running",
+  finishedAt: undefined,
+};
+
 describe("Chat", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { store.set(key, value); },
+      removeItem: (key: string) => { store.delete(key); },
+      clear: () => { store.clear(); },
+    });
     vi.mocked(api.getTrace).mockResolvedValue({ steps: [], toolCalls: [] });
   });
 
@@ -83,5 +96,33 @@ describe("Chat", () => {
     expect(trace?.hasAttribute("open")).toBe(false);
     expect(user.compareDocumentPosition(trace!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(trace!.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps Send enabled while a Run is active and shows Stop", () => {
+    const onStop = vi.fn();
+    render(<Chat
+      messages={[userMessage]}
+      runs={[running]}
+      onSend={vi.fn()}
+      onStop={onStop}
+    />);
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Follow up" } });
+    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it("sends with the selected follow-up mode", () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    render(<Chat messages={[]} runs={[]} onSend={onSend} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Redirect please" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(onSend).toHaveBeenCalledWith("Redirect please", "steer");
+    expect(window.localStorage.getItem("agent-platform.followUpMode")).toBe("steer");
   });
 });

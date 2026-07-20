@@ -171,17 +171,18 @@ func (store *Store) CreateUserMessageAndRunForUser(
 	conversationID string,
 	clientMessageID string,
 	content string,
+	mode domain.FollowUpMode,
 	pinned domain.RunPins,
-) (domain.Run, error) {
+) (domain.Run, []domain.RunEvent, error) {
 	queries := query.Use(store.database)
 	if _, err := findOwnedConversation(ctx, queries, userID, conversationID); err != nil {
-		return domain.Run{}, err
+		return domain.Run{}, nil, err
 	}
-	run, err := store.CreateUserMessageAndRun(ctx, conversationID, clientMessageID, content, pinned)
+	run, events, err := store.CreateUserMessageAndRun(ctx, conversationID, clientMessageID, content, mode, pinned)
 	if err != nil {
-		return domain.Run{}, err
+		return domain.Run{}, nil, err
 	}
-	return run, nil
+	return run, events, nil
 }
 
 // GetRunSnapshot returns the current safe status for a user-owned Run.

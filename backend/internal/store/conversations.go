@@ -15,15 +15,18 @@ import (
 )
 
 // CreateUserMessageAndRun appends a user Message and its queued Run atomically.
+// When mode is steer, active Runs are cancelled first in the same transaction.
 func (store *Store) CreateUserMessageAndRun(
 	context context.Context,
 	conversationID string,
 	clientMessageID string,
 	content string,
+	mode domain.FollowUpMode,
 	pinned domain.RunPins,
-) (domain.Run, error) {
+) (domain.Run, []domain.RunEvent, error) {
 	queries := query.Use(store.database)
 	var createdRun *model.Run
+	var cancelEvents []domain.RunEvent
 	err := queries.Transaction(func(transaction *query.Query) error {
 		conversation, err := lockConversation(context, transaction, conversationID)
 		if err != nil {
@@ -39,6 +42,13 @@ func (store *Store) CreateUserMessageAndRun(
 			return nil
 		}
 
+		if mode == domain.FollowUpModeSteer {
+			cancelEvents, err = cancelActiveRunsInTx(context, transaction, conversation)
+			if err != nil {
+				return err
+			}
+		}
+
 		createdRun, err = createMessageAndRun(
 			context,
 			transaction,
@@ -51,10 +61,10 @@ func (store *Store) CreateUserMessageAndRun(
 		return err
 	})
 	if err != nil {
-		return domain.Run{}, fmt.Errorf("create user Message and Run: %w", err)
+		return domain.Run{}, nil, fmt.Errorf("create user Message and Run: %w", err)
 	}
 
-	return domainRun(createdRun), nil
+	return domainRun(createdRun), cancelEvents, nil
 }
 
 func lockConversation(
