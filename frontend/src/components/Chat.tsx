@@ -79,7 +79,10 @@ export function Chat({
   }, [mode]);
 
   useEffect(() => () => {
-    if (rafRef.current != null) window.cancelAnimationFrame(rafRef.current);
+    if (rafRef.current != null) {
+      window.cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
