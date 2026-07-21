@@ -114,6 +114,16 @@ describe("Chat", () => {
     expect(onStop).toHaveBeenCalledOnce();
   });
 
+  it("keeps the composer outside the scrollable messages region", () => {
+    const { container } = render(<Chat messages={[userMessage]} runs={[run]} onSend={vi.fn()} />);
+    const messages = container.querySelector(".messages");
+    const composer = container.querySelector("form.composer");
+    expect(messages).toBeTruthy();
+    expect(composer).toBeTruthy();
+    expect(messages!.contains(composer)).toBe(false);
+    expect(composer!.compareDocumentPosition(messages!) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  });
+
   it("sends with the selected follow-up mode", () => {
     const onSend = vi.fn().mockResolvedValue(undefined);
     render(<Chat messages={[]} runs={[]} onSend={onSend} />);

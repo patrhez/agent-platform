@@ -102,7 +102,7 @@ export default function App() {
         onCreate={startDraft}
         onSelect={(id) => void loadConversation(id)}
       />
-      <section>
+      <section className="chat-column">
         <header>
           <h1>Issue Troubleshooter Agent</h1>
           {error && <p className="error">{error}</p>}

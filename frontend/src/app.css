@@ -5,18 +5,54 @@ body {
   background: #f5f7fb;
 }
 
-.layout { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+.layout { display: grid; grid-template-columns: 260px 1fr; height: 100vh; min-height: 100vh; }
 aside { padding: 20px; background: #172033; color: white; }
 aside button { display: block; width: 100%; margin: 8px 0; padding: 10px; text-align: left; color: inherit; background: transparent; border: 0; border-radius: 6px; }
 aside .new-conversation { margin-bottom: 18px; border: 1px solid #6f8fbd; background: #30415f; font-weight: 600; }
 aside .new-conversation:hover { background: #3b5278; }
 aside .selected { background: #30415f; }
-section { max-width: 960px; width: calc(100% - 48px); margin: 0 auto; padding: 24px; }
-.messages { min-height: 55vh; }
+section.chat-column {
+  max-width: 960px;
+  width: calc(100% - 48px);
+  margin: 0 auto;
+  padding: 24px 24px 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
+section.chat-column > header { flex: 0 0 auto; }
+.chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.messages-pane {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 16px;
+}
+form.composer {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  padding: 12px 0 24px;
+  background: #f5f7fb;
+}
 article { max-width: 75%; margin: 16px 0; padding: 12px 16px; border-radius: 12px; background: white; }
 article.user { margin-left: auto; background: #dcecff; }
 article.user p { white-space: pre-wrap; line-height: 1.5; }
-form { display: flex; gap: 12px; align-items: stretch; }
 textarea { flex: 1; min-height: 68px; }
 .composer-actions { display: flex; flex-direction: column; gap: 8px; min-width: 110px; }
 .follow-up-mode { display: flex; gap: 4px; }

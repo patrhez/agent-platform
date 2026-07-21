@@ -49,8 +49,9 @@ export function Chat({
 		}
 	}, [mode]);
 
-  return <main>
-    <div className="messages">
+  return <main className="chat">
+    <div className="messages-pane">
+      <div className="messages">
       {turns.map((turn) => {
         const showDraft = Boolean(
           draft
@@ -88,8 +89,9 @@ export function Chat({
         <MarkdownContent content={draft.content} />
         <span className="generation-cursor" aria-hidden="true" />
       </article>}
+      </div>
     </div>
-    <form onSubmit={(event) => {
+    <form className="composer" onSubmit={(event) => {
       event.preventDefault();
       if (!content.trim() || busy) return;
       const next = content.trim();
