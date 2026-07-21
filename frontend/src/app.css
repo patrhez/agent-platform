@@ -1,3 +1,8 @@
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -5,8 +10,20 @@ body {
   background: #f5f7fb;
 }
 
-.layout { display: grid; grid-template-columns: 260px 1fr; height: 100vh; min-height: 100vh; }
-aside { padding: 20px; background: #172033; color: white; }
+.layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+.layout > * { min-height: 0; }
+aside {
+  padding: 20px;
+  background: #172033;
+  color: white;
+  overflow-y: auto;
+}
 aside button { display: block; width: 100%; margin: 8px 0; padding: 10px; text-align: left; color: inherit; background: transparent; border: 0; border-radius: 6px; }
 aside .new-conversation { margin-bottom: 18px; border: 1px solid #6f8fbd; background: #30415f; font-weight: 600; }
 aside .new-conversation:hover { background: #3b5278; }
@@ -43,10 +60,10 @@ section.chat-column > header { flex: 0 0 auto; }
   padding-bottom: 16px;
 }
 .jump-to-latest {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  z-index: 1;
+  position: fixed;
+  right: 28px;
+  bottom: 120px;
+  z-index: 20;
   padding: 8px 12px;
   border: 1px solid #cbd5e1;
   border-radius: 999px;
@@ -139,9 +156,10 @@ details { margin-top: 20px; background: white; padding: 12px; }
 @keyframes cursor-blink { 50% { opacity: 0; } }
 
 @media (max-width: 700px) {
-  .layout { grid-template-columns: 1fr; }
-  aside { display: flex; overflow-x: auto; gap: 8px; }
+  .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  aside { display: flex; overflow-x: auto; overflow-y: hidden; gap: 8px; }
   aside h2 { display: none; }
   aside button { min-width: 160px; }
   article { max-width: calc(100% - 32px); }
+  .jump-to-latest { right: 16px; bottom: 132px; }
 }
