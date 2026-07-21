@@ -166,4 +166,77 @@ describe("Chat", () => {
     expect(messages.scrollTop).toBe(messages.scrollHeight - messages.clientHeight);
     expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull();
   });
+
+  it("auto-scrolls while stuck when the draft grows", async () => {
+    const { container, rerender } = render(
+      <Chat messages={[userMessage]} runs={[running]} draft={draft} onSend={vi.fn()} />,
+    );
+    const messages = container.querySelector(".messages") as HTMLElement;
+    mockScrollMetrics(messages, { scrollTop: 0, scrollHeight: 500, clientHeight: 80 });
+    // start stuck near bottom
+    mockScrollMetrics(messages, { scrollTop: 400, scrollHeight: 500, clientHeight: 80 });
+    fireEvent.scroll(messages);
+
+    mockScrollMetrics(messages, { scrollTop: 400, scrollHeight: 800, clientHeight: 80 });
+    rerender(<Chat
+      messages={[userMessage]}
+      runs={[running]}
+      draft={{ ...draft, content: draft.content + "\n\nmore tokens" }}
+      onSend={vi.fn()}
+    />);
+
+    await vi.waitFor(() => {
+      expect(messages.scrollTop).toBe(messages.scrollHeight - messages.clientHeight);
+    });
+  });
+
+  it("does not auto-scroll when the user has scrolled up", () => {
+    const { container, rerender } = render(
+      <Chat messages={[userMessage]} runs={[running]} draft={draft} onSend={vi.fn()} />,
+    );
+    const messages = container.querySelector(".messages") as HTMLElement;
+    mockScrollMetrics(messages, { scrollTop: 50, scrollHeight: 500, clientHeight: 80 });
+    fireEvent.scroll(messages);
+    const before = messages.scrollTop;
+
+    mockScrollMetrics(messages, { scrollTop: before, scrollHeight: 800, clientHeight: 80 });
+    rerender(<Chat
+      messages={[userMessage]}
+      runs={[running]}
+      draft={{ ...draft, content: draft.content + "\n\nmore tokens" }}
+      onSend={vi.fn()}
+    />);
+
+    expect(messages.scrollTop).toBe(before);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeTruthy();
+  });
+
+  it("forces stick after send", async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(<Chat messages={[userMessage]} runs={[run]} onSend={onSend} />);
+    const messages = container.querySelector(".messages") as HTMLElement;
+    mockScrollMetrics(messages, { scrollTop: 10, scrollHeight: 500, clientHeight: 80 });
+    fireEvent.scroll(messages);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Follow up" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(onSend).toHaveBeenCalled();
+    expect(messages.scrollTop).toBe(messages.scrollHeight - messages.clientHeight);
+    expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull();
+  });
+
+  it("resets stick when conversationKey changes", () => {
+    const { container, rerender } = render(
+      <Chat conversationKey="a" messages={[userMessage]} runs={[run]} onSend={vi.fn()} />,
+    );
+    const messages = container.querySelector(".messages") as HTMLElement;
+    mockScrollMetrics(messages, { scrollTop: 10, scrollHeight: 500, clientHeight: 80 });
+    fireEvent.scroll(messages);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeTruthy();
+
+    rerender(<Chat conversationKey="b" messages={[userMessage]} runs={[run]} onSend={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull();
+  });
 });

@@ -14,6 +14,7 @@ function isStuckToBottom(el: HTMLElement): boolean {
 }
 
 type ChatProps = {
+  conversationKey?: string;
   messages: Message[];
   runs: Run[];
   eventsByRunID?: Record<string, RunEvent[]>;
@@ -30,6 +31,7 @@ type Turn = {
 };
 
 export function Chat({
+  conversationKey,
   messages,
   runs,
   eventsByRunID = {},
@@ -41,6 +43,7 @@ export function Chat({
   const [content, setContent] = useState("");
   const [mode, setMode] = useState<FollowUpMode>(readFollowUpMode);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number | null>(null);
   const [stuckToBottom, setStuckToBottom] = useState(true);
 
   const scrollToBottom = () => {
@@ -49,19 +52,45 @@ export function Chat({
     el.scrollTop = el.scrollHeight - el.clientHeight;
     setStuckToBottom(true);
   };
+
+  const scheduleScrollToBottom = () => {
+    if (rafRef.current != null) return;
+    rafRef.current = window.requestAnimationFrame(() => {
+      rafRef.current = null;
+      const el = messagesRef.current;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight - el.clientHeight;
+      setStuckToBottom(true);
+    });
+  };
+
   const active = runs.some((run) => ["queued", "running", "waiting"].includes(run.status));
   const turns = buildTurns(messages, runs);
   const draftAttached = draft
     ? turns.some((turn) => turn.run?.id === draft.runID)
     : false;
 
-	useEffect(() => {
-		try {
-			window.localStorage.setItem(followUpModeKey, mode);
-		} catch {
-			// Ignore storage failures in restricted environments.
-		}
-	}, [mode]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(followUpModeKey, mode);
+    } catch {
+      // Ignore storage failures in restricted environments.
+    }
+  }, [mode]);
+
+  useEffect(() => () => {
+    if (rafRef.current != null) window.cancelAnimationFrame(rafRef.current);
+  }, []);
+
+  useEffect(() => {
+    setStuckToBottom(true);
+    scheduleScrollToBottom();
+  }, [conversationKey]);
+
+  useEffect(() => {
+    if (!stuckToBottom) return;
+    scheduleScrollToBottom();
+  }, [draft?.content, messages, turns.length, stuckToBottom]);
 
   return <main className="chat">
     <div className="messages-pane">
@@ -126,6 +155,7 @@ export function Chat({
       if (!content.trim() || busy) return;
       const next = content.trim();
       setContent("");
+      scrollToBottom();
       void onSend(next, mode);
     }}>
       <textarea

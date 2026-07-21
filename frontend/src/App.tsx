@@ -108,6 +108,7 @@ export default function App() {
           {error && <p className="error">{error}</p>}
         </header>
         <Chat
+          conversationKey={drafting ? "draft" : activeID}
           messages={visibleDetail?.messages ?? []}
           runs={visibleDetail?.runs ?? []}
           eventsByRunID={eventsByRunID}
