@@ -44,12 +44,14 @@ export function Chat({
   const [mode, setMode] = useState<FollowUpMode>(readFollowUpMode);
   const messagesRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
+  const stuckToBottomRef = useRef(true);
   const [stuckToBottom, setStuckToBottom] = useState(true);
 
   const scrollToBottom = () => {
     const el = messagesRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight - el.clientHeight;
+    stuckToBottomRef.current = true;
     setStuckToBottom(true);
   };
 
@@ -57,6 +59,7 @@ export function Chat({
     if (rafRef.current != null) return;
     rafRef.current = window.requestAnimationFrame(() => {
       rafRef.current = null;
+      if (!stuckToBottomRef.current) return;
       const el = messagesRef.current;
       if (!el) return;
       el.scrollTop = el.scrollHeight - el.clientHeight;
@@ -86,6 +89,7 @@ export function Chat({
   }, []);
 
   useEffect(() => {
+    stuckToBottomRef.current = true;
     setStuckToBottom(true);
     scheduleScrollToBottom();
   }, [conversationKey]);
@@ -101,7 +105,9 @@ export function Chat({
         className="messages"
         ref={messagesRef}
         onScroll={(event) => {
-          setStuckToBottom(isStuckToBottom(event.currentTarget));
+          const stuck = isStuckToBottom(event.currentTarget);
+          stuckToBottomRef.current = stuck;
+          setStuckToBottom(stuck);
         }}
       >
       {turns.map((turn) => {
