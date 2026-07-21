@@ -42,6 +42,15 @@ const running: Run = {
   finishedAt: undefined,
 };
 
+function mockScrollMetrics(
+  el: HTMLElement,
+  metrics: { scrollTop: number; scrollHeight: number; clientHeight: number },
+) {
+  Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => metrics.scrollHeight });
+  Object.defineProperty(el, "clientHeight", { configurable: true, get: () => metrics.clientHeight });
+  el.scrollTop = metrics.scrollTop;
+}
+
 describe("Chat", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -134,5 +143,27 @@ describe("Chat", () => {
 
     expect(onSend).toHaveBeenCalledWith("Redirect please", "steer");
     expect(window.localStorage.getItem("agent-platform.followUpMode")).toBe("steer");
+  });
+
+  it("hides Jump to latest while stuck to bottom", () => {
+    const { container } = render(<Chat messages={[userMessage]} runs={[run]} onSend={vi.fn()} />);
+    const messages = container.querySelector(".messages") as HTMLElement;
+    mockScrollMetrics(messages, { scrollTop: 920, scrollHeight: 1000, clientHeight: 80 });
+    fireEvent.scroll(messages);
+    expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull();
+  });
+
+  it("shows Jump to latest after scrolling up and restores stick on click", () => {
+    const { container } = render(<Chat messages={[userMessage]} runs={[run]} onSend={vi.fn()} />);
+    const messages = container.querySelector(".messages") as HTMLElement;
+    mockScrollMetrics(messages, { scrollTop: 100, scrollHeight: 1000, clientHeight: 80 });
+    fireEvent.scroll(messages);
+
+    const jump = screen.getByRole("button", { name: "Jump to latest" });
+    expect(jump).toBeTruthy();
+
+    fireEvent.click(jump);
+    expect(messages.scrollTop).toBe(messages.scrollHeight - messages.clientHeight);
+    expect(screen.queryByRole("button", { name: "Jump to latest" })).toBeNull();
   });
 });

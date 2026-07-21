@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FollowUpMode, Message, Run } from "../api/client";
 import type { RunEvent } from "../api/events";
 import type { AssistantDraft } from "../state/conversation";
@@ -7,6 +7,11 @@ import { RunStatus } from "./RunStatus";
 import { RunTrace } from "./RunTrace";
 
 const followUpModeKey = "agent-platform.followUpMode";
+const STICK_THRESHOLD_PX = 80;
+
+function isStuckToBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_THRESHOLD_PX;
+}
 
 type ChatProps = {
   messages: Message[];
@@ -35,6 +40,15 @@ export function Chat({
 }: ChatProps) {
   const [content, setContent] = useState("");
   const [mode, setMode] = useState<FollowUpMode>(readFollowUpMode);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const [stuckToBottom, setStuckToBottom] = useState(true);
+
+  const scrollToBottom = () => {
+    const el = messagesRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight - el.clientHeight;
+    setStuckToBottom(true);
+  };
   const active = runs.some((run) => ["queued", "running", "waiting"].includes(run.status));
   const turns = buildTurns(messages, runs);
   const draftAttached = draft
@@ -51,7 +65,13 @@ export function Chat({
 
   return <main className="chat">
     <div className="messages-pane">
-      <div className="messages">
+      <div
+        className="messages"
+        ref={messagesRef}
+        onScroll={(event) => {
+          setStuckToBottom(isStuckToBottom(event.currentTarget));
+        }}
+      >
       {turns.map((turn) => {
         const showDraft = Boolean(
           draft
@@ -90,6 +110,16 @@ export function Chat({
         <span className="generation-cursor" aria-hidden="true" />
       </article>}
       </div>
+      {!stuckToBottom && (
+        <button
+          type="button"
+          className="jump-to-latest"
+          aria-label="Jump to latest"
+          onClick={scrollToBottom}
+        >
+          Jump to latest
+        </button>
+      )}
     </div>
     <form className="composer" onSubmit={(event) => {
       event.preventDefault();
