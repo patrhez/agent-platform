@@ -1,6 +1,6 @@
 export type Conversation = { id: string; title: string; createdAt: string; updatedAt: string; latestMessageAt?: string };
 export type Message = { id: string; conversationId: string; seq: number; role: "user" | "assistant"; content: string; status: string; runId?: string; createdAt: string };
-export type Run = { id: string; conversationId: string; triggerMessageId: string; queueSeq: number; status: string; attempt: number; errorCode?: string; finishedAt?: string; createdAt: string };
+export type Run = { id: string; conversationId: string; triggerMessageId: string; queueSeq: number; status: string; attempt: number; errorCode?: string; errorMessage?: string; finishedAt?: string; createdAt: string };
 export type ConversationDetail = { conversation: Conversation; messages: Message[]; runs: Run[] };
 export type RunTrace = { steps: TraceStep[]; toolCalls: ToolCall[] };
 export type TraceStep = { id: string; stepNo: number; kind: string; status: string; safeSummary: string; startedAt?: string; finishedAt?: string; createdAt: string };

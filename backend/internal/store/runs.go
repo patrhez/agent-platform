@@ -167,6 +167,7 @@ func domainRun(run *model.Run) domain.Run {
 		AgentConfigVersion:  run.AgentConfigVersion,
 		SkillsBundleVersion: run.SkillsBundleVersion,
 		ErrorCode:           stringValue(run.TerminalErrorCode),
+		ErrorMessage:        stringValue(run.TerminalErrorMessage),
 		FinishedAt:          run.FinishedAt,
 		CreatedAt:           run.CreatedAt,
 	}

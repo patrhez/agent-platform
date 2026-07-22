@@ -115,6 +115,7 @@ func terminalizeRunCancelled(
 	now time.Time,
 ) ([]domain.RunEvent, error) {
 	errorCode := "cancelled"
+	errorMessage := "Run cancelled."
 	result, err := transaction.Run.WithContext(ctx).
 		Where(
 			transaction.Run.ID.Eq(run.ID),
@@ -129,6 +130,7 @@ func terminalizeRunCancelled(
 			transaction.Run.LeaseExpiresAt.Null(),
 			transaction.Run.CancelRequestedAt.Value(now),
 			transaction.Run.TerminalErrorCode.Value(errorCode),
+			transaction.Run.TerminalErrorMessage.Value(errorMessage),
 			transaction.Run.FinishedAt.Value(now),
 			transaction.Run.UpdatedAt.Value(now),
 		)
@@ -141,12 +143,13 @@ func terminalizeRunCancelled(
 	run.Status = string(domain.RunStatusCancelled)
 	run.CancelRequestedAt = &now
 	run.TerminalErrorCode = &errorCode
+	run.TerminalErrorMessage = &errorMessage
 	run.FinishedAt = &now
 	run.UpdatedAt = now
 	run.LeaseOwner = nil
 	run.LeaseExpiresAt = nil
 
-	payload, err := json.Marshal(map[string]string{"summary": "Agent execution did not complete"})
+	payload, err := json.Marshal(map[string]string{"summary": errorMessage})
 	if err != nil {
 		return nil, fmt.Errorf("encode cancel event for Run %s: %w", run.ID, err)
 	}

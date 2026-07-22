@@ -42,6 +42,7 @@ func newRun(db *gorm.DB, opts ...gen.DOOption) run {
 	_run.NextEventSeq = field.NewInt64(tableName, "next_event_seq")
 	_run.CancelRequestedAt = field.NewTime(tableName, "cancel_requested_at")
 	_run.TerminalErrorCode = field.NewString(tableName, "terminal_error_code")
+	_run.TerminalErrorMessage = field.NewString(tableName, "terminal_error_message")
 	_run.StartedAt = field.NewTime(tableName, "started_at")
 	_run.FinishedAt = field.NewTime(tableName, "finished_at")
 	_run.CreatedAt = field.NewTime(tableName, "created_at")
@@ -55,29 +56,30 @@ func newRun(db *gorm.DB, opts ...gen.DOOption) run {
 type run struct {
 	runDo runDo
 
-	ALL                 field.Asterisk
-	ID                  field.String
-	ConversationID      field.String
-	TriggerMessageID    field.String
-	QueueSeq            field.Int64
-	Status              field.String
-	Attempt             field.Int
-	NextAttemptAt       field.Time
-	LeaseOwner          field.String
-	LeaseExpiresAt      field.Time
-	ExecutionToken      field.Int64
-	AgentConfigVersion  field.String
-	SkillsBundleVersion field.String
-	ModelConfig         field.Field
-	WorkspaceRef        field.Field
-	LatestCheckpointID  field.String
-	NextEventSeq        field.Int64
-	CancelRequestedAt   field.Time
-	TerminalErrorCode   field.String
-	StartedAt           field.Time
-	FinishedAt          field.Time
-	CreatedAt           field.Time
-	UpdatedAt           field.Time
+	ALL                  field.Asterisk
+	ID                   field.String
+	ConversationID       field.String
+	TriggerMessageID     field.String
+	QueueSeq             field.Int64
+	Status               field.String
+	Attempt              field.Int
+	NextAttemptAt        field.Time
+	LeaseOwner           field.String
+	LeaseExpiresAt       field.Time
+	ExecutionToken       field.Int64
+	AgentConfigVersion   field.String
+	SkillsBundleVersion  field.String
+	ModelConfig          field.Field
+	WorkspaceRef         field.Field
+	LatestCheckpointID   field.String
+	NextEventSeq         field.Int64
+	CancelRequestedAt    field.Time
+	TerminalErrorCode    field.String
+	TerminalErrorMessage field.String
+	StartedAt            field.Time
+	FinishedAt           field.Time
+	CreatedAt            field.Time
+	UpdatedAt            field.Time
 
 	fieldMap map[string]field.Expr
 }
@@ -112,6 +114,7 @@ func (r *run) updateTableName(table string) *run {
 	r.NextEventSeq = field.NewInt64(table, "next_event_seq")
 	r.CancelRequestedAt = field.NewTime(table, "cancel_requested_at")
 	r.TerminalErrorCode = field.NewString(table, "terminal_error_code")
+	r.TerminalErrorMessage = field.NewString(table, "terminal_error_message")
 	r.StartedAt = field.NewTime(table, "started_at")
 	r.FinishedAt = field.NewTime(table, "finished_at")
 	r.CreatedAt = field.NewTime(table, "created_at")
@@ -140,7 +143,7 @@ func (r *run) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (r *run) fillFieldMap() {
-	r.fieldMap = make(map[string]field.Expr, 22)
+	r.fieldMap = make(map[string]field.Expr, 23)
 	r.fieldMap["id"] = r.ID
 	r.fieldMap["conversation_id"] = r.ConversationID
 	r.fieldMap["trigger_message_id"] = r.TriggerMessageID
@@ -159,6 +162,7 @@ func (r *run) fillFieldMap() {
 	r.fieldMap["next_event_seq"] = r.NextEventSeq
 	r.fieldMap["cancel_requested_at"] = r.CancelRequestedAt
 	r.fieldMap["terminal_error_code"] = r.TerminalErrorCode
+	r.fieldMap["terminal_error_message"] = r.TerminalErrorMessage
 	r.fieldMap["started_at"] = r.StartedAt
 	r.fieldMap["finished_at"] = r.FinishedAt
 	r.fieldMap["created_at"] = r.CreatedAt

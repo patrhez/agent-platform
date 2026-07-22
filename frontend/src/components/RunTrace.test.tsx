@@ -150,13 +150,19 @@ describe("RunTrace", () => {
     expect(screen.queryByText(/skip/)).toBeNull();
   });
 
-  it("shows a safe live failure state", async () => {
-    const failedRun: Run = { ...run, status: "failed", errorCode: "runtime_error" };
+  it("shows a compact failure summary without the detailed status message", async () => {
+    const failedRun: Run = {
+      ...run,
+      status: "failed",
+      errorCode: "llm_overload",
+      errorMessage: "The language model is currently overloaded. Please retry in a moment.",
+    };
     render(<RunTrace run={failedRun} events={[event(4, "tool.completed", {
       toolCallId: "tool-failed", tool: "code.search", status: "failed",
       arguments: { repo: "agent-platform", query: "missing" }, resultSummary: "Tool execution failed", durationMs: 5,
     })]} />);
-    expect(await screen.findByText("Failed (runtime_error)")).toBeTruthy();
+    expect(await screen.findByText("Failed (llm_overload)")).toBeTruthy();
+    expect(screen.queryByText("The language model is currently overloaded. Please retry in a moment.")).toBeNull();
     expect(screen.getByText("Tool execution failed")).toBeTruthy();
   });
 });

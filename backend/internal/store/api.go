@@ -372,7 +372,8 @@ func domainRuns(runs []*model.Run) []domain.Run {
 func runSnapshot(run *model.Run, finalMessageID string) domain.RunSnapshot {
 	return domain.RunSnapshot{
 		Run: domainRun(run), LatestEventSeq: run.NextEventSeq - 1, FinalMessageID: finalMessageID,
-		ErrorCode: stringValue(run.TerminalErrorCode), FinishedAt: run.FinishedAt,
+		ErrorCode: stringValue(run.TerminalErrorCode), ErrorMessage: stringValue(run.TerminalErrorMessage),
+		FinishedAt: run.FinishedAt,
 	}
 }
 

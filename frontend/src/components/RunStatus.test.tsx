@@ -14,9 +14,23 @@ const baseRun: Run = {
 };
 
 describe("RunStatus", () => {
-  it("renders a safe failed status", () => {
-    render(<RunStatus run={{ ...baseRun, status: "failed", errorCode: "runtime_error" }} />);
-    expect(screen.getByRole("status").textContent).toBe("Run failed (runtime_error). Check the execution trace or retry.");
+  it("renders a safe failed status from errorMessage", () => {
+    render(<RunStatus run={{
+      ...baseRun,
+      status: "failed",
+      errorCode: "llm_invalid_temperature",
+      errorMessage: "The language model rejected the temperature setting. Check the agent model configuration and retry.",
+    }} />);
+    expect(screen.getByRole("status").textContent).toBe(
+      "The language model rejected the temperature setting. Check the agent model configuration and retry.",
+    );
+  });
+
+  it("falls back to a known errorCode message", () => {
+    render(<RunStatus run={{ ...baseRun, status: "failed", errorCode: "llm_overload" }} />);
+    expect(screen.getByRole("status").textContent).toBe(
+      "The language model is currently overloaded. Please retry in a moment.",
+    );
   });
 
   it("renders a cancelled status", () => {

@@ -63,9 +63,10 @@ type Run struct {
 	LatestCheckpointID  *string        `gorm:"type:char(26)"`
 	NextEventSeq        int64          `gorm:"not null;default:1"`
 	CancelRequestedAt   *time.Time     `gorm:"precision:6"`
-	TerminalErrorCode   *string        `gorm:"type:varchar(128)"`
-	StartedAt           *time.Time     `gorm:"precision:6"`
-	FinishedAt          *time.Time     `gorm:"precision:6"`
+	TerminalErrorCode    *string        `gorm:"type:varchar(128)"`
+	TerminalErrorMessage *string        `gorm:"type:varchar(512)"`
+	StartedAt            *time.Time     `gorm:"precision:6"`
+	FinishedAt           *time.Time     `gorm:"precision:6"`
 	CreatedAt           time.Time      `gorm:"not null;precision:6"`
 	UpdatedAt           time.Time      `gorm:"not null;precision:6"`
 }

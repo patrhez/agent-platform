@@ -26,6 +26,7 @@ type Run struct {
 	AgentConfigVersion  string     `json:"agentConfigVersion"`
 	SkillsBundleVersion string     `json:"skillsBundleVersion"`
 	ErrorCode           string     `json:"errorCode,omitempty"`
+	ErrorMessage        string     `json:"errorMessage,omitempty"`
 	FinishedAt          *time.Time `json:"finishedAt,omitempty"`
 	CreatedAt           time.Time  `json:"createdAt"`
 }
@@ -66,6 +67,7 @@ type RunSnapshot struct {
 	LatestEventSeq int64      `json:"latestEventSeq"`
 	FinalMessageID string     `json:"finalMessageId,omitempty"`
 	ErrorCode      string     `json:"errorCode,omitempty"`
+	ErrorMessage   string     `json:"errorMessage,omitempty"`
 	FinishedAt     *time.Time `json:"finishedAt,omitempty"`
 }
 
@@ -162,5 +164,6 @@ type RunCompletion struct {
 	Status         RunStatus
 	AssistantText  string
 	ErrorCode      string
+	ErrorMessage   string
 	Event          RunEvent
 }

@@ -164,11 +164,17 @@ function liveTimeline(events: RunEvent[]): TimelineItem[] {
       }];
     }
     if (event.type === "run.failed" || event.type === "run.cancelled" || event.type === "run.completed") {
+      // Keep terminal rows short; the detailed English reason lives in RunStatus.
+      const label = event.type === "run.completed"
+        ? "Run completed"
+        : event.type === "run.cancelled"
+          ? "Run cancelled"
+          : "Run failed";
       return [{
         key: `run:${event.seq}`,
         order: 100_000 + event.seq,
         kind: "run",
-        label: stringValue(event.payload.summary) ?? "Run status updated",
+        label,
         status: event.type === "run.completed" ? "completed" : event.type.replace("run.", ""),
       }];
     }

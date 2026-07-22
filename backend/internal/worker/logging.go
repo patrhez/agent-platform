@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/patrhez/agent-platform/backend/internal/domain"
@@ -65,8 +64,5 @@ func writeRunFailureLog(
 }
 
 func runFailureCode(cause error) string {
-	if errors.Is(cause, runtime.ErrRunCancelled) {
-		return "cancelled"
-	}
-	return "runtime_error"
+	return runtime.ClassifyRunFailure(cause).Code
 }

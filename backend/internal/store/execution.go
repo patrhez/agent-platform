@@ -403,6 +403,9 @@ func completeRunRecord(
 	if completion.ErrorCode != "" {
 		updates = append(updates, transaction.Run.TerminalErrorCode.Value(completion.ErrorCode))
 	}
+	if completion.ErrorMessage != "" {
+		updates = append(updates, transaction.Run.TerminalErrorMessage.Value(completion.ErrorMessage))
+	}
 	_, err := transaction.Run.WithContext(context).
 		Where(transaction.Run.ID.Eq(run.ID), transaction.Run.ExecutionToken.Eq(run.ExecutionToken)).
 		UpdateSimple(updates...)

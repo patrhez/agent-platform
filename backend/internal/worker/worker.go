@@ -363,11 +363,12 @@ func (worker *Worker) completeFailure(ctx context.Context, run domain.Run, cause
 	if errors.Is(cause, store.ErrLeaseLost) || errors.Is(cause, context.Canceled) {
 		return cause
 	}
+	failure := runtime.ClassifyRunFailure(cause)
 	status, eventType := domain.RunStatusFailed, "run.failed"
-	if errors.Is(cause, runtime.ErrRunCancelled) {
+	if failure.Code == "cancelled" {
 		status, eventType = domain.RunStatusCancelled, "run.cancelled"
 	}
-	event, err := terminalEvent(eventType, "Agent execution did not complete")
+	event, err := terminalEvent(eventType, failure.Message)
 	if err != nil {
 		return err
 	}
@@ -375,7 +376,8 @@ func (worker *Worker) completeFailure(ctx context.Context, run domain.Run, cause
 		RunID:          run.ID,
 		ExecutionToken: run.ExecutionToken,
 		Status:         status,
-		ErrorCode:      runFailureCode(cause),
+		ErrorCode:      failure.Code,
+		ErrorMessage:   failure.Message,
 		Event:          event,
 	})
 	if err != nil {
