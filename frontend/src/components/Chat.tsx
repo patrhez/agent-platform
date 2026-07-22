@@ -133,8 +133,7 @@ export function Chat({
             aria-busy="true"
           >
             <b>Agent</b>
-            <MarkdownContent content={draft.content} />
-            <span className="generation-cursor" aria-hidden="true" />
+            <DraftContent draft={draft} />
           </article>}
         </div>;
       })}
@@ -144,8 +143,7 @@ export function Chat({
         aria-busy="true"
       >
         <b>Agent</b>
-        <MarkdownContent content={draft.content} />
-        <span className="generation-cursor" aria-hidden="true" />
+        <DraftContent draft={draft} />
       </article>}
       </div>
       {!stuckToBottom && (
@@ -201,6 +199,16 @@ export function Chat({
       </div>
     </form>
   </main>;
+}
+
+function DraftContent({ draft }: { draft: AssistantDraft }) {
+  if (!draft.content) {
+    return <span className="typing-indicator" aria-hidden="true"><span /><span /><span /></span>;
+  }
+  return <>
+    <MarkdownContent content={draft.content} />
+    <span className="generation-cursor" aria-hidden="true" />
+  </>;
 }
 
 function readFollowUpMode(): FollowUpMode {

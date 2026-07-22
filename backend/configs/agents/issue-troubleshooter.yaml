@@ -5,7 +5,7 @@ agent:
   model:
     api_mode: chat_completions
     model: ${LLM_MODEL}
-    temperature: 0.1
+    temperature: 1
   limits:
     max_steps: 50
     run_timeout_seconds: 600
