@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,7 +21,7 @@ const defaultAgentConfigPath = "/etc/agent-platform/issue-troubleshooter.yaml"
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	if err := run(ctx); err != nil && worker.ShouldExitNonZero(err) {
 		os.Exit(1)
 	}
 }
@@ -63,12 +62,22 @@ func run(ctx context.Context) error {
 		logger.Error(ctx, "open Redis notifier failed", zap.Error(err))
 		return err
 	}
-	service, err := worker.New(store.New(db), runner, notifier, logger, configuration.WorkerID)
+	service, err := worker.New(
+		store.New(db),
+		runner,
+		notifier,
+		logger,
+		configuration.WorkerID,
+		configuration.WorkerConcurrency,
+	)
 	if err != nil {
 		logger.Error(ctx, "create Worker failed", zap.Error(err))
 		return err
 	}
-	logger.Info(ctx, "worker started", zap.String("worker_id", configuration.WorkerID))
+	logger.Info(ctx, "worker started",
+		zap.String("worker_id", configuration.WorkerID),
+		zap.Int("concurrency", configuration.WorkerConcurrency),
+	)
 	return service.Run(ctx)
 }
 

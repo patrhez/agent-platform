@@ -68,6 +68,8 @@ services:
       context: ./backend
       dockerfile: docker/worker.Dockerfile
       args: *build-proxy
+    # Above worker shutdownWait (25s) so in-flight Runs can drain before SIGKILL.
+    stop_grace_period: 40s
     environment:
       MYSQL_DSN: "${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE}?parseTime=true&charset=utf8mb4&loc=UTC"
       REDIS_URL: redis://redis:6379/0
@@ -76,6 +78,7 @@ services:
       LLM_MODEL: ${LLM_MODEL}
       WORKSPACE_MCP_URL: http://workspace-mcp:8081/mcp
       WORKER_ID: ${WORKER_ID}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-10}
       AGENT_CONFIG_PATH: /etc/agent-platform/issue-troubleshooter.yaml
     depends_on:
       migrate: {condition: service_completed_successfully}

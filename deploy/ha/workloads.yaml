@@ -156,7 +156,8 @@ spec:
         app.kubernetes.io/part-of: agent-platform
         app.kubernetes.io/component: worker
     spec:
-      terminationGracePeriodSeconds: 5
+      # Above worker shutdownWait (25s) so in-flight Runs can drain before SIGKILL.
+      terminationGracePeriodSeconds: 40
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

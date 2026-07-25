@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -10,43 +9,75 @@ import (
 	"github.com/patrhez/agent-platform/backend/internal/model"
 	"github.com/patrhez/agent-platform/backend/internal/query"
 	"gorm.io/gen/field"
-	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 const claimLeaseDuration = 30 * time.Second
 
+// ClaimNextRuns leases up to limit currently executable Runs for workerID
+// in a single transaction.
+func (store *Store) ClaimNextRuns(
+	ctx context.Context,
+	workerID string,
+	now time.Time,
+	limit int,
+) ([]domain.Run, error) {
+	if limit < 1 {
+		return nil, fmt.Errorf("claim limit must be >= 1")
+	}
+	queries := query.Use(store.database)
+	var claimed []*model.Run
+	err := queries.Transaction(func(transaction *query.Query) error {
+		candidates, err := selectClaimCandidates(ctx, transaction, now, limit)
+		if err != nil {
+			return err
+		}
+		claimed = make([]*model.Run, 0, len(candidates))
+		for _, candidate := range candidates {
+			run, err := claimRun(ctx, transaction, candidate, workerID, now)
+			if err != nil {
+				return err
+			}
+			claimed = append(claimed, run)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("claim next Runs: %w", err)
+	}
+	result := make([]domain.Run, 0, len(claimed))
+	for _, run := range claimed {
+		result = append(result, domainRun(run))
+	}
+	return result, nil
+}
+
 // ClaimNextRun leases the first currently executable queued Run for workerID.
+//
+// Deprecated: Use ClaimNextRuns. ClaimNextRun remains as a compatibility
+// wrapper around ClaimNextRuns with limit 1.
 func (store *Store) ClaimNextRun(
-	context context.Context,
+	ctx context.Context,
 	workerID string,
 	now time.Time,
 ) (domain.Run, bool, error) {
-	queries := query.Use(store.database)
-	var claimedRun *model.Run
-	err := queries.Transaction(func(transaction *query.Query) error {
-		candidate, found, err := selectClaimCandidate(context, transaction, now)
-		if err != nil || !found {
-			return err
-		}
-		claimedRun, err = claimRun(context, transaction, candidate, workerID, now)
-		return err
-	})
+	runs, err := store.ClaimNextRuns(ctx, workerID, now, 1)
 	if err != nil {
-		return domain.Run{}, false, fmt.Errorf("claim next Run: %w", err)
+		return domain.Run{}, false, err
 	}
-	if claimedRun == nil {
+	if len(runs) == 0 {
 		return domain.Run{}, false, nil
 	}
-	return domainRun(claimedRun), true, nil
+	return runs[0], true, nil
 }
 
-func selectClaimCandidate(
-	context context.Context,
+func selectClaimCandidates(
+	ctx context.Context,
 	transaction *query.Query,
 	now time.Time,
-) (*model.Run, bool, error) {
-	run, err := transaction.Run.WithContext(context).
+	limit int,
+) ([]*model.Run, error) {
+	runs, err := transaction.Run.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 		Join(
 			transaction.Conversation,
@@ -64,14 +95,12 @@ func selectClaimCandidate(
 			transaction.Run.QueueSeq.EqCol(transaction.Conversation.NextExecutableRunSeq),
 		).
 		Order(transaction.Run.QueueSeq.Asc()).
-		First()
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, false, nil
-	}
+		Limit(limit).
+		Find()
 	if err != nil {
-		return nil, false, fmt.Errorf("select next executable Run: %w", err)
+		return nil, fmt.Errorf("select executable Runs: %w", err)
 	}
-	return run, true, nil
+	return runs, nil
 }
 
 func claimRun(

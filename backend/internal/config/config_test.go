@@ -42,3 +42,51 @@ func TestLoadUsesConnectionDefaults(t *testing.T) {
 		t.Errorf("Load() LLMModel = %q, want default", got.LLMModel)
 	}
 }
+
+func TestLoadWorkerConcurrencyDefault(t *testing.T) {
+	t.Setenv("MYSQL_DSN", "demo:demo@tcp(mysql:3306)/agent_platform")
+	t.Setenv("WORKER_CONCURRENCY", "")
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.WorkerConcurrency != 10 {
+		t.Errorf("WorkerConcurrency = %d, want 10", got.WorkerConcurrency)
+	}
+}
+
+func TestLoadWorkerConcurrencyExplicit(t *testing.T) {
+	t.Setenv("MYSQL_DSN", "demo:demo@tcp(mysql:3306)/agent_platform")
+	t.Setenv("WORKER_CONCURRENCY", "3")
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.WorkerConcurrency != 3 {
+		t.Errorf("WorkerConcurrency = %d, want 3", got.WorkerConcurrency)
+	}
+}
+
+func TestLoadWorkerConcurrencyRejectsInvalid(t *testing.T) {
+	t.Setenv("MYSQL_DSN", "demo:demo@tcp(mysql:3306)/agent_platform")
+
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{name: "zero", value: "0"},
+		{name: "negative", value: "-1"},
+		{name: "non-integer", value: "abc"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("WORKER_CONCURRENCY", testCase.value)
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() error = nil, want error for WORKER_CONCURRENCY=%q", testCase.value)
+			}
+		})
+	}
+}

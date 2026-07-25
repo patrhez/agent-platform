@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/patrhez/agent-platform/backend/internal/domain"
@@ -21,11 +22,15 @@ const (
 	leaseRenewInterval  = 10 * time.Second
 	leaseDuration       = 30 * time.Second
 	defaultPollInterval = time.Second
+	// shutdownWait bounds in-flight drain after cancel. Deployments must keep a
+	// stop/termination grace period above this value (with buffer) so SIGKILL
+	// does not cut the drain short; see compose.full.yaml and deploy/ha/workloads.yaml.
+	shutdownWait = 25 * time.Second
 )
 
 // RunStore is the durable Worker dependency.
 type RunStore interface {
-	ClaimNextRun(context.Context, string, time.Time) (domain.Run, bool, error)
+	ClaimNextRuns(context.Context, string, time.Time, int) ([]domain.Run, error)
 	RenewLease(context.Context, string, int64, time.Time) error
 	LoadRunExecution(context.Context, string, int64) (domain.RunExecution, error)
 	LatestCheckpoint(context.Context, string) (*domain.Checkpoint, error)
@@ -42,7 +47,56 @@ type Worker struct {
 	notifier     events.Notifier
 	logger       logging.Logger
 	workerID     string
+	concurrency  int
 	pollInterval time.Duration
+}
+
+// runPool tracks in-flight Executes and fatal shutdown signals for Worker.Run.
+type runPool struct {
+	mu       sync.Mutex
+	inFlight int
+	slotFree chan struct{}
+	fatalCh  chan error
+	wg       sync.WaitGroup
+	cancel   context.CancelFunc
+}
+
+func newRunPool(cancel context.CancelFunc) *runPool {
+	return &runPool{
+		slotFree: make(chan struct{}, 1),
+		fatalCh:  make(chan error, 1),
+		cancel:   cancel,
+	}
+}
+
+func (pool *runPool) signalFree() {
+	select {
+	case pool.slotFree <- struct{}{}:
+	default:
+	}
+}
+
+func (pool *runPool) reportFatal(err error) {
+	select {
+	case pool.fatalCh <- err:
+		pool.cancel()
+	default:
+	}
+}
+
+func (pool *runPool) freeSlots(concurrency int) int {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+	return concurrency - pool.inFlight
+}
+
+func (pool *runPool) firstFatal() error {
+	select {
+	case err := <-pool.fatalCh:
+		return err
+	default:
+		return nil
+	}
 }
 
 // New creates a Worker using the given durable Store and Agent runtime.
@@ -52,9 +106,13 @@ func New(
 	notifier events.Notifier,
 	logger logging.Logger,
 	workerID string,
+	concurrency int,
 ) (*Worker, error) {
 	if store == nil || runner == nil || notifier == nil || workerID == "" {
 		return nil, fmt.Errorf("Worker requires Store, runner, Notifier, and Worker ID")
+	}
+	if concurrency < 1 {
+		return nil, fmt.Errorf("Worker concurrency must be >= 1")
 	}
 	if logger == nil {
 		logger = logging.Nop()
@@ -65,38 +123,117 @@ func New(
 		notifier:     notifier,
 		logger:       logger,
 		workerID:     workerID,
+		concurrency:  concurrency,
 		pollInterval: defaultPollInterval,
 	}, nil
 }
 
-// Run continuously claims and executes durable Runs until context cancellation.
+// Run claims batches of Runs and executes them concurrently until shutdown or a fatal error.
 func (worker *Worker) Run(ctx context.Context) error {
-	ticker := time.NewTicker(worker.pollInterval)
-	defer ticker.Stop()
+	parent := ctx
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	pool := newRunPool(cancel)
+	var runErr error
 	for {
-		processed, err := worker.processNext(ctx)
-		if err != nil {
-			return err
+		if err := pool.firstFatal(); err != nil {
+			runErr = err
+			break
 		}
-		if processed {
-			continue
+		if err := worker.claimOnce(ctx, pool); err != nil {
+			if errors.Is(err, errClaimerStop) {
+				break
+			}
+			worker.logger.Error(ctx, "fatal claim error", zap.Error(err))
+			pool.reportFatal(err)
+			runErr = err
+			break
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
+	}
+
+	worker.waitInFlight(ctx, pool)
+	if runErr != nil {
+		return runErr
+	}
+	if err := pool.firstFatal(); err != nil {
+		return err
+	}
+	return parent.Err()
+}
+
+// errClaimerStop signals the claimer should exit to shutdown without a new fatal.
+var errClaimerStop = errors.New("claimer stop")
+
+func (worker *Worker) claimOnce(ctx context.Context, pool *runPool) error {
+	select {
+	case <-ctx.Done():
+		return errClaimerStop
+	default:
+	}
+
+	free := pool.freeSlots(worker.concurrency)
+	if free < 1 {
+		return worker.waitForSlot(ctx, pool)
+	}
+
+	runs, err := worker.store.ClaimNextRuns(ctx, worker.workerID, time.Now().UTC(), free)
+	if err != nil {
+		// Cancel/deadline from ClaimNextRuns is clean shutdown only when the Worker ctx is done.
+		if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) &&
+			ctx.Err() != nil {
+			return errClaimerStop
 		}
+		return Fatal(fmt.Errorf("claim next Runs: %w", err))
+	}
+	if len(runs) == 0 {
+		return worker.waitForWork(ctx, pool)
+	}
+
+	for _, run := range runs {
+		worker.startExecute(ctx, pool, run)
+	}
+	return nil
+}
+
+func (worker *Worker) waitForSlot(ctx context.Context, pool *runPool) error {
+	select {
+	case <-ctx.Done():
+		return errClaimerStop
+	case <-pool.slotFree:
+		return nil
 	}
 }
 
-func (worker *Worker) processNext(ctx context.Context) (bool, error) {
-	run, claimed, err := worker.store.ClaimNextRun(ctx, worker.workerID, time.Now().UTC())
-	if err != nil {
-		return false, fmt.Errorf("claim next Run: %w", err)
+func (worker *Worker) waitForWork(ctx context.Context, pool *runPool) error {
+	select {
+	case <-ctx.Done():
+		return errClaimerStop
+	case <-time.After(worker.pollInterval):
+		return nil
+	case <-pool.slotFree:
+		return nil
 	}
-	if !claimed {
-		return false, nil
-	}
+}
+
+func (worker *Worker) startExecute(ctx context.Context, pool *runPool, run domain.Run) {
+	pool.mu.Lock()
+	pool.inFlight++
+	pool.mu.Unlock()
+	pool.wg.Add(1)
+	go worker.executeClaimed(ctx, pool, run)
+}
+
+func (worker *Worker) executeClaimed(ctx context.Context, pool *runPool, run domain.Run) {
+	defer async.Recover(ctx, worker.logger)
+	defer pool.wg.Done()
+	defer func() {
+		pool.mu.Lock()
+		pool.inFlight--
+		pool.mu.Unlock()
+		pool.signalFree()
+	}()
+
 	worker.logger.Info(
 		ctx,
 		"run claimed",
@@ -105,10 +242,35 @@ func (worker *Worker) processNext(ctx context.Context) (bool, error) {
 		zap.Int("attempt", run.Attempt),
 		zap.Int64("queue_seq", run.QueueSeq),
 	)
-	if err := worker.Execute(ctx, run); err != nil && !errors.Is(err, store.ErrLeaseLost) {
-		return true, err
+	if err := worker.Execute(ctx, run); err != nil {
+		if errors.Is(err, store.ErrLeaseLost) || errors.Is(err, context.Canceled) {
+			return
+		}
+		if IsFatalWorkerError(err) {
+			worker.logger.Error(ctx, "fatal run execution error",
+				zap.String("run_id", run.ID), zap.Error(err))
+			pool.reportFatal(err)
+			return
+		}
+		worker.logger.Error(ctx, "run execution failed",
+			zap.String("run_id", run.ID), zap.Error(err))
 	}
-	return true, nil
+}
+
+func (worker *Worker) waitInFlight(ctx context.Context, pool *runPool) {
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), shutdownWait)
+	defer waitCancel()
+	done := make(chan struct{})
+	go func() {
+		defer async.Recover(waitCtx, worker.logger)
+		pool.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-waitCtx.Done():
+		worker.logger.Warn(ctx, "shutdown wait timed out; exiting with in-flight runs")
+	}
 }
 
 // Execute runs one claimed Run and persists a terminal outcome when it still owns the lease.

@@ -3,26 +3,30 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"strconv"
 )
 
 const (
-	defaultRedisURL        = "redis://redis:6379/0"
-	defaultLLMBaseURL      = ""
-	defaultLLMModel        = "internal-default"
-	defaultWorkspaceMCPURL = "http://workspace-mcp:8081/mcp"
-	defaultWorkerID        = "worker-local"
+	defaultRedisURL          = "redis://redis:6379/0"
+	defaultLLMBaseURL        = ""
+	defaultLLMModel          = "internal-default"
+	defaultWorkspaceMCPURL   = "http://workspace-mcp:8081/mcp"
+	defaultWorkerID          = "worker-local"
+	defaultWorkerConcurrency = 10
 )
 
 // Config contains the environment-derived configuration shared by service roles.
 type Config struct {
-	MySQLDSN        string
-	RedisURL        string
-	LLMBaseURL      string
-	LLMAPIKey       string
-	LLMModel        string
-	WorkspaceMCPURL string
-	WorkerID        string
+	MySQLDSN          string
+	RedisURL          string
+	LLMBaseURL        string
+	LLMAPIKey         string
+	LLMModel          string
+	WorkspaceMCPURL   string
+	WorkerID          string
+	WorkerConcurrency int
 }
 
 // Load reads the process configuration and validates values required by every role.
@@ -41,6 +45,12 @@ func Load() (Config, error) {
 		return Config{}, errors.New("MYSQL_DSN is required")
 	}
 
+	concurrency, err := concurrencyFromEnv("WORKER_CONCURRENCY", defaultWorkerConcurrency)
+	if err != nil {
+		return Config{}, err
+	}
+	config.WorkerConcurrency = concurrency
+
 	return config, nil
 }
 
@@ -51,4 +61,19 @@ func valueOrDefault(key, fallback string) string {
 	}
 
 	return value
+}
+
+func concurrencyFromEnv(key string, fallback int) (int, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
+	}
+	if value < 1 {
+		return 0, fmt.Errorf("%s must be >= 1", key)
+	}
+	return value, nil
 }
