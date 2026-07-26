@@ -106,7 +106,7 @@ aside {
   overflow-y: auto;
 }
 aside h2 {
-  margin: 4px 10px 12px;
+  margin: 0;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -145,6 +145,138 @@ aside .new-conversation:hover {
   background: var(--surface-subtle);
   border-color: var(--border-strong);
   color: var(--text);
+}
+
+.conversation-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 2px 12px;
+  padding: 0 8px;
+}
+.conversation-list-header .text-button {
+  width: auto;
+  margin: 0;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.conversation-list-header .text-button:hover {
+  background: rgba(28, 25, 23, 0.05);
+  color: var(--text);
+}
+
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.selection-bar .text-button,
+.selection-bar .danger-text {
+  width: auto;
+  margin: 0;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.selection-bar .text-button:hover {
+  background: rgba(28, 25, 23, 0.05);
+  color: var(--text);
+}
+.selection-bar span {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+}
+.selection-bar .danger-text {
+  color: var(--danger);
+}
+.selection-bar .danger-text:hover:not(:disabled) {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.selection-bar .danger-text:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.conversation-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 1px 0;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration) var(--ease);
+}
+button.conversation-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+.conversation-row.selected {
+  background: #eae7e3;
+  color: var(--text);
+  font-weight: 500;
+}
+.conversation-row:hover,
+.conversation-row:focus-within {
+  background: rgba(28, 25, 23, 0.05);
+  color: var(--text);
+}
+.conversation-row.selected:hover,
+.conversation-row.selected:focus-within {
+  background: #eae7e3;
+}
+.conversation-main {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.conversation-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--primary);
+  pointer-events: none;
+}
+.conversation-delete {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0 4px 0 0;
+  padding: 4px 8px;
+  opacity: 0;
+  color: var(--danger);
+  font-size: 18px;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+}
+.conversation-row:hover .conversation-delete,
+.conversation-row:focus-within .conversation-delete {
+  opacity: 1;
+}
+.conversation-delete:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 /* ---------- Chat column ---------- */
@@ -618,6 +750,55 @@ textarea:disabled { color: var(--text-muted); }
 }
 
 @keyframes cursor-blink { 50% { opacity: 0; } }
+
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(28, 25, 23, 0.35);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+.confirm-dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 20px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+}
+.confirm-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.confirm-dialog p {
+  margin: 0 0 18px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.confirm-actions button {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+.confirm-actions button.danger {
+  border-color: var(--danger-border);
+  background: var(--danger);
+  color: #fff;
+}
+.confirm-actions button:disabled {
+  opacity: 0.6;
+}
 
 /* ---------- Reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {

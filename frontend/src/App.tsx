@@ -1,8 +1,9 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { api, type Conversation, type FollowUpMode } from "./api/client";
 import { subscribeToRun } from "./api/events";
 import { activeRuns, applyEvent, assistantDraft, initialState, runEvents } from "./state/conversation";
 import { Chat } from "./components/Chat";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ConversationList } from "./components/ConversationList";
 import { newClientMessageID } from "./id";
 import "./app.css";
@@ -14,6 +15,13 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [state, dispatch] = useReducer(applyEvent, initialState);
   const [error, setError] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIDs, setSelectedIDs] = useState<Set<string>>(new Set());
+  const [confirm, setConfirm] = useState<
+    null | { kind: "single"; id: string } | { kind: "bulk"; ids: string[] }
+  >(null);
+  const [deleting, setDeleting] = useState(false);
+  const deletingRef = useRef(false);
 
   const loadConversation = async (id: string) => {
     const detail = await api.getConversation(id);
@@ -55,6 +63,52 @@ export default function App() {
     setError("");
   };
 
+  const clearSelectionMode = () => {
+    setSelecting(false);
+    setSelectedIDs(new Set());
+  };
+
+  const requestDelete = (id: string) => {
+    if (deleting) return;
+    setConfirm({ kind: "single", id });
+  };
+
+  const requestBulkDelete = () => {
+    if (deleting || selectedIDs.size === 0) return;
+    setConfirm({ kind: "bulk", ids: [...selectedIDs] });
+  };
+
+  const confirmDelete = async () => {
+    if (!confirm || deletingRef.current) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    setError("");
+    const deletedIDs = confirm.kind === "single" ? [confirm.id] : confirm.ids;
+    const wasActiveDeleted = Boolean(activeID && deletedIDs.includes(activeID));
+    try {
+      if (confirm.kind === "single") {
+        await api.deleteConversation(confirm.id);
+      } else {
+        await api.deleteConversations(confirm.ids);
+      }
+      setConfirm(null);
+      clearSelectionMode();
+      if (wasActiveDeleted) {
+        startDraft();
+      }
+      try {
+        await loadConversationList();
+      } catch (cause) {
+        setError(String(cause));
+      }
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      deletingRef.current = false;
+      setDeleting(false);
+    }
+  };
+
   const send = async (content: string, mode: FollowUpMode) => {
     setBusy(true);
     setError("");
@@ -94,13 +148,43 @@ export default function App() {
     (visibleDetail?.runs ?? []).map((run) => [run.id, runEvents(state, run.id)]),
   );
 
+  const confirmTitle = confirm?.kind === "bulk"
+    ? `Delete ${confirm.ids.length} conversations?`
+    : "Delete conversation?";
+  const confirmMessage = confirm?.kind === "bulk"
+    ? "Deleted conversations are removed from your list and cannot be restored."
+    : (conversations.find((item) => item.id === confirm?.id)?.title ?? "This conversation");
+
   return (
     <div className="layout">
       <ConversationList
         conversations={conversations}
         activeID={activeID}
+        selecting={selecting}
+        selectedIDs={selectedIDs}
         onCreate={startDraft}
         onSelect={(id) => void loadConversation(id)}
+        onToggleSelectMode={() => {
+          if (selecting) clearSelectionMode();
+          else setSelecting(true);
+        }}
+        onToggleSelected={(id) => {
+          setSelectedIDs((current) => {
+            const next = new Set(current);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+          });
+        }}
+        onSelectAll={() => {
+          setSelectedIDs((current) =>
+            current.size === conversations.length
+              ? new Set()
+              : new Set(conversations.map((item) => item.id)),
+          );
+        }}
+        onRequestDelete={requestDelete}
+        onRequestBulkDelete={requestBulkDelete}
       />
       <section className="chat-column">
         <header>
@@ -118,6 +202,14 @@ export default function App() {
           onStop={activeID ? stop : undefined}
         />
       </section>
+      <ConfirmDialog
+        open={confirm !== null}
+        title={confirmTitle}
+        message={confirmMessage}
+        busy={deleting}
+        onCancel={() => { if (!deleting) setConfirm(null); }}
+        onConfirm={() => { void confirmDelete(); }}
+      />
     </div>
   );
 }

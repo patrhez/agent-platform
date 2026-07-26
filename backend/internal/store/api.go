@@ -144,22 +144,29 @@ func (store *Store) GetConversation(ctx context.Context, userID string, conversa
 
 // DeleteConversation soft-deletes a user-owned Conversation from the normal UI.
 func (store *Store) DeleteConversation(ctx context.Context, userID string, conversationID string) error {
+	return store.DeleteConversations(ctx, userID, []string{conversationID})
+}
+
+// DeleteConversations soft-deletes the given user-owned Conversations in one transaction.
+func (store *Store) DeleteConversations(ctx context.Context, userID string, conversationIDs []string) error {
 	queries := query.Use(store.database)
 	err := queries.Transaction(func(transaction *query.Query) error {
-		conversation, err := lockConversation(ctx, transaction, conversationID)
-		if err != nil {
-			return err
-		}
-		if conversation.UserID != userID {
-			return ErrUnauthorized
-		}
-		if _, err := transaction.Conversation.WithContext(ctx).Delete(conversation); err != nil {
-			return fmt.Errorf("soft-delete Conversation %s: %w", conversationID, err)
+		for _, conversationID := range conversationIDs {
+			conversation, err := lockConversation(ctx, transaction, conversationID)
+			if err != nil {
+				return err
+			}
+			if conversation.UserID != userID {
+				return ErrUnauthorized
+			}
+			if _, err := transaction.Conversation.WithContext(ctx).Delete(conversation); err != nil {
+				return fmt.Errorf("soft-delete Conversation %s: %w", conversationID, err)
+			}
 		}
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("delete Conversation: %w", err)
+		return fmt.Errorf("delete Conversations: %w", err)
 	}
 	return nil
 }

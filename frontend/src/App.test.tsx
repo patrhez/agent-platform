@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -13,6 +13,8 @@ vi.mock("./api/client", () => ({
     cancelActive: vi.fn(),
     getTrace: vi.fn(),
     cancelRun: vi.fn(),
+    deleteConversation: vi.fn(),
+    deleteConversations: vi.fn(),
   },
 }));
 vi.mock("./api/events", () => ({
@@ -20,6 +22,7 @@ vi.mock("./api/events", () => ({
 }));
 
 const existing = { id: "existing", title: "Existing", createdAt: "2026-07-18T00:00:00Z", updatedAt: "2026-07-18T00:00:00Z" };
+const second = { id: "second", title: "Second", createdAt: "2026-07-18T00:02:00Z", updatedAt: "2026-07-18T00:02:00Z" };
 const created = { id: "created", title: "Created", createdAt: "2026-07-18T00:01:00Z", updatedAt: "2026-07-18T00:01:00Z" };
 const existingDetail: ConversationDetail = {
   conversation: existing,
@@ -53,5 +56,98 @@ describe("App new conversation flow", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(api.createConversation).toHaveBeenCalledWith("first draft question"));
+  });
+});
+
+describe("App conversation delete flow", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.listConversations)
+      .mockResolvedValueOnce({ conversations: [existing, second] })
+      .mockResolvedValue({ conversations: [second] });
+    vi.mocked(api.getConversation).mockResolvedValue(existingDetail);
+    vi.mocked(api.deleteConversation).mockResolvedValue(undefined);
+    vi.mocked(api.deleteConversations).mockResolvedValue(undefined);
+  });
+
+  it("deletes the active conversation and enters draft mode", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("existing message");
+
+    await user.click(screen.getAllByRole("button", { name: "Delete conversation" })[0]);
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(api.deleteConversation).toHaveBeenCalledWith(existing.id));
+    expect(screen.queryByText("existing message")).toBeNull();
+    expect(api.createConversation).not.toHaveBeenCalled();
+  });
+
+  it("bulk deletes selected conversations in one request", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.listConversations)
+      .mockReset()
+      .mockResolvedValueOnce({ conversations: [existing, second] })
+      .mockResolvedValue({ conversations: [] });
+    render(<App />);
+    await screen.findByText("Existing");
+
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    await user.click(screen.getByText("Existing"));
+    await user.click(screen.getByText("Second"));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(api.deleteConversations).toHaveBeenCalledWith(
+      expect.arrayContaining([existing.id, second.id]),
+    ));
+  });
+
+  it("does not call delete twice on double confirm", async () => {
+    const user = userEvent.setup();
+    let resolveDelete!: () => void;
+    vi.mocked(api.deleteConversation).mockImplementation(
+      () => new Promise((resolve) => { resolveDelete = () => resolve(undefined); }),
+    );
+
+    render(<App />);
+    await screen.findByText("existing message");
+
+    await user.click(screen.getAllByRole("button", { name: "Delete conversation" })[0]);
+    const dialog = await screen.findByRole("dialog");
+    const deleteBtn = within(dialog).getByRole("button", { name: "Delete" });
+
+    act(() => {
+      deleteBtn.click();
+      deleteBtn.click();
+    });
+
+    expect(api.deleteConversation).toHaveBeenCalledTimes(1);
+
+    resolveDelete();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("closes confirm dialog when list refresh fails after successful delete", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.listConversations)
+      .mockReset()
+      .mockResolvedValueOnce({ conversations: [existing, second] })
+      .mockRejectedValueOnce(new Error("list failed"));
+
+    render(<App />);
+    await screen.findByText("existing message");
+
+    await user.click(screen.getAllByRole("button", { name: "Delete conversation" })[0]);
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(api.deleteConversation).toHaveBeenCalledWith(existing.id));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(await screen.findByText(/list failed/)).toBeInTheDocument();
+    expect(screen.queryByText("existing message")).toBeNull();
+    expect(api.createConversation).not.toHaveBeenCalled();
   });
 });

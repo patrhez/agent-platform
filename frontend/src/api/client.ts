@@ -28,6 +28,13 @@ export const api = {
     request<{ cancelled: boolean }>(`/conversations/${conversationID}/cancel-active`, { method: "POST" }),
   getTrace: (runID: string) => request<RunTrace>(`/runs/${runID}/trace`),
   cancelRun: (runID: string) => request(`/runs/${runID}/cancel`, { method: "POST" }),
+  deleteConversation: (id: string) =>
+    request<void>(`/conversations/${id}`, { method: "DELETE" }),
+  deleteConversations: (ids: string[]) =>
+    request<void>("/conversations/delete", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
 };
 
 export function eventURL(runID: string, after = 0): string { return `${apiRoot}/runs/${runID}/events?after=${after}`; }

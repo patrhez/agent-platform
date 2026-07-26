@@ -14,7 +14,14 @@ import (
 	"go.uber.org/zap"
 )
 
-const maxRequestBodyBytes = 1 << 20
+const (
+	maxRequestBodyBytes      = 1 << 20
+	maxDeleteConversationIDs = 100
+)
+
+type deleteConversationsRequest struct {
+	IDs []string `json:"ids"`
+}
 
 type createConversationRequest struct {
 	Title           string `json:"title"`
@@ -112,6 +119,52 @@ func (server *Server) getConversation(responseWriter http.ResponseWriter, reques
 		return
 	}
 	writeJSON(ctx, server.logger, responseWriter, http.StatusOK, detail)
+}
+
+// normalizeDeleteConversationIDs validates and deduplicates bulk-delete IDs.
+func normalizeDeleteConversationIDs(ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("ids must be a non-empty array")
+	}
+	seen := make(map[string]struct{}, len(ids))
+	normalized := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			return nil, fmt.Errorf("ids must not contain empty values")
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+	if len(normalized) > maxDeleteConversationIDs {
+		return nil, fmt.Errorf("ids must contain at most %d unique values", maxDeleteConversationIDs)
+	}
+	return normalized, nil
+}
+
+func (server *Server) deleteConversations(responseWriter http.ResponseWriter, request *http.Request) {
+	ctx := request.Context()
+	principal, err := requestPrincipal(ctx)
+	if err != nil {
+		writeError(ctx, server.logger, responseWriter, http.StatusUnauthorized, "unauthenticated", err)
+		return
+	}
+	body, ok := decodeJSON[deleteConversationsRequest](server.logger, responseWriter, request)
+	if !ok {
+		return
+	}
+	ids, err := normalizeDeleteConversationIDs(body.IDs)
+	if err != nil {
+		writeError(ctx, server.logger, responseWriter, http.StatusBadRequest, "invalid_ids", err)
+		return
+	}
+	if err := server.store.DeleteConversations(ctx, principal.UserID(), ids); err != nil {
+		writeStoreError(ctx, server.logger, responseWriter, err)
+		return
+	}
+	responseWriter.WriteHeader(http.StatusNoContent)
 }
 
 func (server *Server) deleteConversation(responseWriter http.ResponseWriter, request *http.Request) {
