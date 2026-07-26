@@ -1,12 +1,174 @@
 # Agent Platform MVP
 
-This repository is a standalone, read-only, multi-turn troubleshooting Agent. MySQL is the
-durable source of truth; Redis only notifies API processes to replay committed Run events.
+A learning-oriented, standalone MVP of a **read-only, multi-turn troubleshooting Agent
+platform**. The product surface is a chat UI; the real point of the repo is the architecture
+underneath: durable Runs, recoverability, MCP-scoped tools, and a runtime adapter that does not
+own persistence.
 
-Assistant answers stream through durable `assistant.delta` Run events. The Worker batches model
-content before committing it to MySQL, Redis sends only a post-commit hint, and any API instance
-can replay the same sequence through SSE. The completed assistant Message remains the formal
+MySQL is the durable source of truth. Redis only wakes API processes to replay committed Run
+events. Assistant answers stream as durable `assistant.delta` events — the Worker batches model
+content, commits to MySQL, publishes a post-commit hint, and any API instance can replay the same
+sequence over SSE. The completed (or cancelled-partial) assistant Message remains the formal
 Conversation record.
+
+## Features
+
+- **Multi-turn troubleshooting chat** — conversation list, draft new chat, GFM Markdown answers, and pinned composer with smart scroll-to-bottom.
+- **Durable streaming** — assistant deltas commit to MySQL first; SSE replays by sequence (`Last-Event-ID` / `after`) so refresh and API failover keep the same timeline.
+- **Live execution trace** — per-turn collapsible timeline with safe Tool names, allowlisted arguments, statuses, durations, and collapsed result summaries. Model `ReasoningContent` / Chain-of-Thought is never shown.
+- **Follow-up control** — while a Run is active, send with **Queue** (append) or **Steer** (cancel active, then start a new Run); **Stop** cancels active Runs. Interrupted streams keep a partial assistant Message marked Stopped; cancelled text is not fed into the next model context.
+- **Conversation delete** — single-row delete and multi-select bulk delete (soft delete; confirmation dialog).
+- **Read-only Workspace MCP** — host-mounted repositories via `workspace.list_repositories`, `file.list`, `file.stat`, `code.search`, and `file.read`. Only Workspace MCP receives `REPOS_DIR`.
+- **Eino ReAct runtime** — versioned Agent config and Skills bundle, OpenAI-compatible LLM gateway, step/time limits, and context summarization / reduction.
+- **API + Worker roles** — MySQL-backed Run leases and checkpoints; configurable `WORKER_CONCURRENCY` per Worker process.
+- **Recovery demos** — Worker restart, API SSE reconnect, and durable-streaming e2e scripts; optional k3d HA lab for multi-API / multi-Worker failover.
+
+## System design
+
+This repo is meant to be studied as a small but complete Agent platform — not as a thin LLM
+wrapper. One bounded context is split into **stateless deployment roles** that share MySQL and
+coordinate through Redis hints.
+
+### Runtime topology
+
+```text
+Browser (TypeScript / Vite)
+  |  REST + HTTP SSE
+  v
+agent-api (Go, stateless) ------------------------+
+  |                                               |
+  | authoritative R/W                             | subscribe / publish hints
+  v                                               v
+MySQL  <------------------------------------  agent-worker (Go + Eino, stateless)
+  ^        Conversations, Messages, Runs,         |
+  |        Checkpoints, run_events, leases        | Streamable HTTP MCP
+  |                                               v
+  |                                     workspace-mcp (Go, read-only)
+  |                                               |
+  +---------------------------------------- repository directory (read-only)
+
+agent-worker --> OpenAI-compatible LLM gateway
+```
+
+| Role | Responsibility | Does **not** |
+|---|---|---|
+| **Web** | Render chat, open SSE for active Runs, send user turns / Stop / Steer / delete | Talk to Redis, MySQL, LLM, or repository paths |
+| **API** | AuthZ demo principal, write Conversation/Run rows, serve snapshots, hold SSE, replay `run_events` | Run Eino, call MCP, or read `REPOS_DIR` |
+| **Worker** | Lease Runs, execute Eino ReAct, persist boundaries/deltas, publish Redis hints after commit | Hold browser connections or own Conversation truth in memory |
+| **Workspace MCP** | Validate paths, enforce limits, expose allowlisted read-only tools | Accept writes or expose host paths to API/UI |
+| **MySQL** | Source of truth for Conversations, Messages, Runs, leases, checkpoints, ordered `run_events` | — |
+| **Redis** | Pub/Sub wake-up: `{runId, seq}` after durable commit | Store answers, leases, checkpoints, or event payloads |
+
+### Clean layering
+
+Dependency direction is inward: transport → application → domain ← adapters.
+
+```text
+frontend/
+  components/     UI (Chat, ConversationList, RunTrace, ...)
+  state/          pure conversation/event reducers
+  api/            HTTP + EventSource clients
+       |
+       | /api/v1  (REST + SSE)
+       v
+backend/   (one module, two binaries: cmd/api and cmd/worker)
+  httpapi/        transport: routes, SSE, access log, demo auth
+  worker/         application: claim loop, lease renewal, stream buffer, completion
+  store/          application persistence API over GORM Gen
+  domain/         entities, FollowUpMode, Run pins, execution boundaries
+  runtime/        Agent adapter (Eino ReAct) — swappable, does not own DB
+  events/         Redis notifier / subscriber (hint channel only)
+  model/ + query/ persistence models + GORM Gen (infrastructure)
+  config/ logging/ database/  cross-cutting infrastructure
+
+mcp-server/       separate process; only process with REPOS_DIR
+  workspace/      tool handlers (list / stat / search / read)
+```
+
+Rules the layout encodes:
+
+1. **Domain is framework-free** — Conversations, Messages, Runs, and follow-up modes live in `domain/`.
+2. **API and Worker share `store` + `domain`** — same transactions and invariants; different entrypoints.
+3. **Runtime is an adapter** — `runtime/` turns a leased Run + history into model/tool steps; it never writes Conversations directly.
+4. **Persistence is generated** — application code goes through `store/` → GORM Gen `query/`; no handwritten SQL in app paths.
+5. **UI state is derived** — the browser reducer applies durable events; refresh reloads the MySQL snapshot and replays SSE.
+
+### How a turn flows
+
+**1. User sends a message (control plane)**
+
+```text
+Web  --POST /conversations/{id}/messages-->  API
+       { content, clientMessageId, mode: queue|steer }
+
+API  -> MySQL: insert user Message + queued Run
+       (steer/stop first cancel active Runs in the same control path)
+API  <- 202 { messageId, runId, status }
+
+Web  -> GET /runs/{runId}/events?after=0   (SSE)
+API  -> authorize Run, SUBSCRIBE Redis channel, SELECT run_events WHERE seq > after
+```
+
+`clientMessageId` (ULID) makes the POST idempotent: retries return the existing Run instead of
+creating another.
+
+**2. Worker executes (data plane)**
+
+```text
+Worker  -> ClaimNextRuns (MySQL lease + execution token)
+Worker  -> load final Messages + checkpoints
+Worker  -> runtime (Eino): LLM tokens + MCP tool calls
+         |
+         +--> streamBuffer batches text
+         +--> AppendRunEvents / PersistBoundary / CompleteRun  (MySQL commit)
+         +--> Redis PUBLISH { runId, seq }                     (hint only)
+```
+
+In-memory Worker state is disposable. Lease renewal keeps ownership; if the Worker dies, another
+Worker reclaims the same Run with a higher attempt after the lease expires.
+
+**3. API streams to the browser (read path)**
+
+```text
+Redis hint wakes API subscriber
+API  -> SELECT run_events WHERE seq > cursor   (always MySQL, never Redis payload)
+API  -> SSE frame: id=<seq> event=<type> data=<json>
+Web  -> reducer appends deltas / tool rows; terminal event closes EventSource
+```
+
+Refresh recovery: Conversation snapshot from MySQL + SSE replay from `after` /
+`Last-Event-ID`. Redis loss only adds latency until the next poll/heartbeat re-reads MySQL.
+
+### Domain model
+
+```text
+Conversation
+  ├─ Message (user) ──> Run ──> Steps / ToolCalls / Checkpoints / run_events
+  │                         └─> Message (assistant: final | cancelled)
+  └─ ...
+```
+
+- Chat history and execution events are separate: snapshots are per-Conversation; SSE is per-Run.
+- Cancelled partial assistant text is kept for the UI and excluded from the next model context.
+
+### Ideas worth studying
+
+| Idea | Why it matters |
+|---|---|
+| **MySQL as queue + event store** | Leases and checkpoints demonstrate recoverability without Kafka/Temporal. |
+| **Redis is a hint, never truth** | Losing Redis loses latency, not history. |
+| **Durable streaming path** | `LLM → streamBuffer → MySQL → Redis hint → API SELECT → SSE`. |
+| **Stateless API / Worker roles** | Either process can die; Conversation truth stays in MySQL. |
+| **Queue / Steer / Stop** | Explicit control plane for concurrent user turns vs active work. |
+| **MCP security boundary** | Repository IO is isolated; tools are allowlisted with safe arguments. |
+| **Runtime as adapter** | Platform owns persistence and permissions; Eino is replaceable. |
+| **GORM Gen data layer** | One persistence style; transactions stay in `store/`. |
+| **Idempotent client turns** | ULID `clientMessageId` prevents duplicate Runs on retry. |
+| **HA lab as proof** | Multi-API / multi-Worker failover scripts validate lease reclaim + SSE replay. |
+
+Deeper notes: [`docs/tech/`](docs/tech/) (streaming FAQ, logging), design baselines under
+[`docs/superpowers/`](docs/superpowers/), and the live walkthrough in
+[`docs/demo-script.md`](docs/demo-script.md).
 
 ## One-command Quickstart on macOS
 
@@ -77,8 +239,8 @@ Restart one role without changing its durable Run data:
 ```
 
 Only Workspace MCP receives `REPOS_DIR`. It exposes the read-only
-`workspace.list_repositories`, `code.search`, and `file.read` Tools. API and frontend never
-receive the host repository path.
+`workspace.list_repositories`, `file.list`, `file.stat`, `code.search`, and `file.read` Tools.
+API and frontend never receive the host repository path.
 
 The web UI renders assistant content as GFM Markdown and shows a live execution timeline with
 safe Tool names, allowlisted arguments, statuses, durations, and collapsed result summaries.
