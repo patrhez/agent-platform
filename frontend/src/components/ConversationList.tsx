@@ -18,7 +18,7 @@ export function ConversationList(props: ConversationListProps) {
   const selectedCount = props.selectedIDs.size;
 
   return (
-    <aside>
+    <aside id="conversation-sidebar">
       <div className="conversation-list-header">
         <h2>Conversations</h2>
         {props.conversations.length > 0 && (

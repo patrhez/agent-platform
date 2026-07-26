@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { api, type Conversation, type FollowUpMode } from "./api/client";
 import { subscribeToRun } from "./api/events";
 import { activeRuns, applyEvent, assistantDraft, initialState, runEvents } from "./state/conversation";
+import { readSidebarOpen, writeSidebarOpen } from "./state/sidebar";
 import { Chat } from "./components/Chat";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ConversationList } from "./components/ConversationList";
@@ -21,6 +22,7 @@ export default function App() {
     null | { kind: "single"; id: string } | { kind: "bulk"; ids: string[] }
   >(null);
   const [deleting, setDeleting] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(() => readSidebarOpen());
   const deletingRef = useRef(false);
 
   const loadConversation = async (id: string) => {
@@ -66,6 +68,13 @@ export default function App() {
   const clearSelectionMode = () => {
     setSelecting(false);
     setSelectedIDs(new Set());
+  };
+
+  const toggleSidebar = () => {
+    const next = !sidebarOpen;
+    if (!next) clearSelectionMode();
+    setSidebarOpen(next);
+    writeSidebarOpen(next);
   };
 
   const requestDelete = (id: string) => {
@@ -156,36 +165,65 @@ export default function App() {
     : (conversations.find((item) => item.id === confirm?.id)?.title ?? "This conversation");
 
   return (
-    <div className="layout">
-      <ConversationList
-        conversations={conversations}
-        activeID={activeID}
-        selecting={selecting}
-        selectedIDs={selectedIDs}
-        onCreate={startDraft}
-        onSelect={(id) => void loadConversation(id)}
-        onToggleSelectMode={() => {
-          if (selecting) clearSelectionMode();
-          else setSelecting(true);
-        }}
-        onToggleSelected={(id) => {
-          setSelectedIDs((current) => {
-            const next = new Set(current);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-          });
-        }}
-        onSelectAll={() => {
-          setSelectedIDs((current) =>
-            current.size === conversations.length
-              ? new Set()
-              : new Set(conversations.map((item) => item.id)),
-          );
-        }}
-        onRequestDelete={requestDelete}
-        onRequestBulkDelete={requestBulkDelete}
-      />
+    <div className={sidebarOpen ? "layout" : "layout sidebar-collapsed"}>
+      {sidebarOpen && (
+        <ConversationList
+          conversations={conversations}
+          activeID={activeID}
+          selecting={selecting}
+          selectedIDs={selectedIDs}
+          onCreate={startDraft}
+          onSelect={(id) => void loadConversation(id)}
+          onToggleSelectMode={() => {
+            if (selecting) clearSelectionMode();
+            else setSelecting(true);
+          }}
+          onToggleSelected={(id) => {
+            setSelectedIDs((current) => {
+              const next = new Set(current);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            });
+          }}
+          onSelectAll={() => {
+            setSelectedIDs((current) =>
+              current.size === conversations.length
+                ? new Set()
+                : new Set(conversations.map((item) => item.id)),
+            );
+          }}
+          onRequestDelete={requestDelete}
+          onRequestBulkDelete={requestBulkDelete}
+        />
+      )}
+      <div className="sidebar-edge">
+        <button
+          type="button"
+          className="sidebar-toggle"
+          aria-expanded={sidebarOpen}
+          aria-controls="conversation-sidebar"
+          aria-label={sidebarOpen ? "Hide conversations" : "Show conversations"}
+          title={sidebarOpen ? "Hide conversations" : "Show conversations"}
+          onClick={toggleSidebar}
+        >
+          <svg
+            className="sidebar-toggle-icon"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="m11 17-5-5 5-5" />
+            <path d="m18 17-5-5 5-5" />
+          </svg>
+        </button>
+      </div>
       <section className="chat-column">
         <header>
           <h1>Issue Troubleshooter Agent</h1>

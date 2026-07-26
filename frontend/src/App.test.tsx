@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { api, type ConversationDetail } from "./api/client";
+import { SIDEBAR_OPEN_KEY } from "./state/sidebar";
 
 vi.mock("./api/client", () => ({
   api: {
@@ -149,5 +150,55 @@ describe("App conversation delete flow", () => {
     expect(await screen.findByText(/list failed/)).toBeInTheDocument();
     expect(screen.queryByText("existing message")).toBeNull();
     expect(api.createConversation).not.toHaveBeenCalled();
+  });
+});
+
+describe("App collapsible conversation list", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    vi.mocked(api.listConversations).mockResolvedValue({ conversations: [existing, second] });
+    vi.mocked(api.getConversation).mockResolvedValue(existingDetail);
+  });
+
+  it("shows the sidebar by default and hides it when toggled", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Existing");
+
+    const sidebar = document.getElementById("conversation-sidebar");
+    expect(sidebar).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Hide conversations" })).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(screen.getByRole("button", { name: "Hide conversations" }));
+
+    expect(document.getElementById("conversation-sidebar")).toBeNull();
+    expect(screen.getByRole("button", { name: "Show conversations" })).toHaveAttribute("aria-expanded", "false");
+    expect(localStorage.getItem(SIDEBAR_OPEN_KEY)).toBe("false");
+  });
+
+  it("starts collapsed when localStorage says false", async () => {
+    localStorage.setItem(SIDEBAR_OPEN_KEY, "false");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Issue Troubleshooter Agent" });
+
+    expect(document.getElementById("conversation-sidebar")).toBeNull();
+    expect(screen.getByRole("button", { name: "Show conversations" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("clears selection mode when the sidebar collapses", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Existing");
+
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    await user.click(screen.getByText("Existing"));
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Hide conversations" }));
+    await user.click(screen.getByRole("button", { name: "Show conversations" }));
+
+    expect(screen.queryByText("1 selected")).toBeNull();
+    expect(screen.getByRole("button", { name: "Select" })).toBeInTheDocument();
   });
 });
