@@ -48,6 +48,27 @@ func TestAppendRunEventsPersistsOnlyEventsInTransaction(t *testing.T) {
 	}
 }
 
+func TestAssistantMessageStatus(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		status domain.RunStatus
+		want   string
+		ok     bool
+	}{
+		{domain.RunStatusSucceeded, "final", true},
+		{domain.RunStatusCancelled, "cancelled", true},
+		{domain.RunStatusFailed, "", false},
+		{domain.RunStatusRunning, "", false},
+	}
+	for _, test := range cases {
+		got, ok := assistantMessageStatus(test.status)
+		if got != test.want || ok != test.ok {
+			t.Errorf("assistantMessageStatus(%q) = (%q, %v), want (%q, %v)",
+				test.status, got, ok, test.want, test.ok)
+		}
+	}
+}
+
 func TestLoadRunExecutionReturnsFinalConversationHistoryThroughTrigger(t *testing.T) {
 	t.Parallel()
 

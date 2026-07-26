@@ -29,6 +29,7 @@ type streamBuffer struct {
 	attempt    int
 	stepNo     int
 	nextOffset int
+	committed  string
 	pending    string
 	lastFlush  time.Time
 }
@@ -47,6 +48,7 @@ func (buffer *streamBuffer) Add(event runtime.AssistantStreamEvent) error {
 		buffer.attempt = event.Attempt
 		buffer.stepNo = event.StepNo
 		buffer.nextOffset = 0
+		buffer.committed = ""
 		buffer.lastFlush = buffer.now()
 		return buffer.persistEvent("assistant.started", assistantEventPayload{
 			StreamID: event.StreamID,
@@ -69,6 +71,11 @@ func (buffer *streamBuffer) Add(event runtime.AssistantStreamEvent) error {
 	}
 }
 
+// CurrentText returns the active stream body (flushed + pending), matching the live UI draft.
+func (buffer *streamBuffer) CurrentText() string {
+	return buffer.committed + buffer.pending
+}
+
 func (buffer *streamBuffer) Flush() error {
 	if buffer.pending == "" {
 		return nil
@@ -83,6 +90,7 @@ func (buffer *streamBuffer) Flush() error {
 	if err := buffer.persistEvent("assistant.delta", payload); err != nil {
 		return err
 	}
+	buffer.committed += buffer.pending
 	buffer.pending = ""
 	buffer.nextOffset++
 	buffer.lastFlush = buffer.now()

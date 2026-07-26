@@ -122,6 +122,17 @@ On success (`completeSuccess` -> `CompleteRun`):
 4. Stop lease renewal for that Run; loop back to claim the next eligible Run.
 5. Close the Workspace MCP client for that execution (runtime `Close` path).
 
+On cancel (`completeFailure` with `cancelled` -> `CompleteRun`):
+
+1. Flush the stream buffer and read the current-stream partial text.
+2. In one MySQL transaction:
+   - if partial text is non-empty, insert assistant `messages` row with `status=cancelled` (not `final`)
+   - set Run `status=cancelled`, terminal error fields, clear lease, append `run.cancelled`
+   - realign `next_executable_run_seq`
+3. Publish Redis hint as usual.
+
+`LoadRunExecution` still loads only `status=final` Messages for the next model turn, so cancelled partials stay in the UI history but do not enter Agent context. Empty cancels (no streamed text) insert no Message.
+
 Worker does **not** close the browser SSE connection; it only finishes durable state.
 
 ### API

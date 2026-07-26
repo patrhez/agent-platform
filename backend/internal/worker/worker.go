@@ -288,7 +288,7 @@ func (worker *Worker) Execute(ctx context.Context, run domain.Run) error {
 		return err
 	}
 	if cancelled {
-		return worker.completeFailure(ctx, run, runtime.ErrRunCancelled)
+		return worker.completeFailure(ctx, run, runtime.ErrRunCancelled, "")
 	}
 	execution, err := worker.store.LoadRunExecution(ctx, run.ID, run.ExecutionToken)
 	if err != nil {
@@ -299,14 +299,15 @@ func (worker *Worker) Execute(ctx context.Context, run domain.Run) error {
 		return err
 	}
 	runContext, stopRenewal, leaseLost := worker.renewLease(ctx, run)
-	emit, flush := worker.persistEmitter(runContext, run)
+	emit, finish := worker.persistEmitter(runContext, run)
 	result, runError := worker.runner.Run(
 		runContext,
 		runtime.AgentInput{RunID: run.ID, Attempt: run.Attempt, Messages: runtimeMessages(execution.Messages)},
 		checkpoint,
 		emit,
 	)
-	if flushError := flush(); runError == nil && flushError != nil {
+	partial, flushError := finish()
+	if runError == nil && flushError != nil {
 		runError = flushError
 	}
 	stopRenewal()
@@ -314,7 +315,7 @@ func (worker *Worker) Execute(ctx context.Context, run domain.Run) error {
 		return lost
 	}
 	if runError != nil {
-		completionError := worker.completeFailure(ctx, run, runError)
+		completionError := worker.completeFailure(ctx, run, runError, partial)
 		status := domain.RunStatusFailed
 		if errors.Is(runError, runtime.ErrRunCancelled) {
 			status = domain.RunStatusCancelled
@@ -373,7 +374,7 @@ func (worker *Worker) renewLease(
 func (worker *Worker) persistEmitter(
 	ctx context.Context,
 	run domain.Run,
-) (func(runtime.RuntimeEvent) error, func() error) {
+) (func(runtime.RuntimeEvent) error, func() (string, error)) {
 	toolStartedAt := make(map[string]time.Time)
 	buffer := newStreamBuffer(func(values []domain.RunEvent) error {
 		persisted, err := worker.store.AppendRunEvents(ctx, run.ID, run.ExecutionToken, values)
@@ -421,7 +422,11 @@ func (worker *Worker) persistEmitter(
 		worker.publish(ctx, persisted)
 		return nil
 	}
-	return emit, buffer.Flush
+	finish := func() (string, error) {
+		err := buffer.Flush()
+		return buffer.CurrentText(), err
+	}
+	return emit, finish
 }
 
 func boundaryFromRuntimeEvent(
@@ -521,14 +526,16 @@ func (worker *Worker) completeSuccess(ctx context.Context, run domain.Run, resul
 	return nil
 }
 
-func (worker *Worker) completeFailure(ctx context.Context, run domain.Run, cause error) error {
+func (worker *Worker) completeFailure(ctx context.Context, run domain.Run, cause error, partial string) error {
 	if errors.Is(cause, store.ErrLeaseLost) || errors.Is(cause, context.Canceled) {
 		return cause
 	}
 	failure := runtime.ClassifyRunFailure(cause)
 	status, eventType := domain.RunStatusFailed, "run.failed"
+	assistantText := ""
 	if failure.Code == "cancelled" {
 		status, eventType = domain.RunStatusCancelled, "run.cancelled"
+		assistantText = partial
 	}
 	event, err := terminalEvent(eventType, failure.Message)
 	if err != nil {
@@ -538,6 +545,7 @@ func (worker *Worker) completeFailure(ctx context.Context, run domain.Run, cause
 		RunID:          run.ID,
 		ExecutionToken: run.ExecutionToken,
 		Status:         status,
+		AssistantText:  assistantText,
 		ErrorCode:      failure.Code,
 		ErrorMessage:   failure.Message,
 		Event:          event,

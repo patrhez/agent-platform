@@ -19,7 +19,7 @@ Web chat gains two complementary controls while a Run is active:
 | **Steer send** | Cancel every non-terminal Run in the Conversation, then append a new Message + Run so the new question is next. |
 
 - Default mode: **queue**.
-- Cancelled Runs do not persist a partial assistant Message; the turn shows `Cancelled` and the streaming draft clears on snapshot reload.
+- ~~Cancelled Runs do not persist a partial assistant Message; the turn shows `Cancelled` and the streaming draft clears on snapshot reload.~~ **Superseded** for Message persistence by [2026-07-26-stop-steer-partial-message-design.md](./2026-07-26-stop-steer-partial-message-design.md): cancelled Runs with streamed text persist an assistant Message with `status=cancelled`.
 - Mode preference is remembered in the browser (`localStorage`).
 
 ## Architecture
@@ -62,6 +62,6 @@ Steer → POST /messages { mode: "steer" }  // CancelActiveRuns then insert
 
 ## Non-goals
 
-- Promoting a streaming draft to a formal assistant Message on cancel.
+- ~~Promoting a streaming draft to a formal assistant Message on cancel.~~ **Superseded** — see [2026-07-26-stop-steer-partial-message-design.md](./2026-07-26-stop-steer-partial-message-design.md).
 - Same-Run Eino interrupt/resume steering.
 - Changing MySQL-authoritative / Redis-hint SSE design.

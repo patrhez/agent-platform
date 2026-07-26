@@ -66,6 +66,45 @@ func TestStreamBufferFlushesByBytesTimeAndCompletion(t *testing.T) {
 	assertDeltaPayload(t, batches[3][0], 2, "tail")
 }
 
+func TestStreamBufferCurrentTextTracksStreamAndResets(t *testing.T) {
+	now := time.Date(2026, 7, 26, 8, 0, 0, 0, time.UTC)
+	buffer := newStreamBuffer(func([]domain.RunEvent) error { return nil }, func() time.Time { return now })
+
+	if buffer.CurrentText() != "" {
+		t.Fatalf("CurrentText() = %q, want empty before start", buffer.CurrentText())
+	}
+	if err := buffer.Add(runtime.AssistantStreamEvent{
+		StreamID: "run:1:1", Phase: "started", Attempt: 1, StepNo: 1,
+	}); err != nil {
+		t.Fatalf("Add(started) error = %v", err)
+	}
+	if err := buffer.Add(runtime.AssistantStreamEvent{
+		StreamID: "run:1:1", Phase: "delta", Attempt: 1, StepNo: 1, Text: "hello ",
+	}); err != nil {
+		t.Fatalf("Add(delta) error = %v", err)
+	}
+	if got := buffer.CurrentText(); got != "hello " {
+		t.Fatalf("CurrentText() = %q, want %q", got, "hello ")
+	}
+	now = now.Add(streamFlushInterval)
+	if err := buffer.Add(runtime.AssistantStreamEvent{
+		StreamID: "run:1:1", Phase: "delta", Attempt: 1, StepNo: 1, Text: "world",
+	}); err != nil {
+		t.Fatalf("Add(flushing delta) error = %v", err)
+	}
+	if got := buffer.CurrentText(); got != "hello world" {
+		t.Fatalf("CurrentText() after flush = %q, want %q", got, "hello world")
+	}
+	if err := buffer.Add(runtime.AssistantStreamEvent{
+		StreamID: "run:1:2", Phase: "started", Attempt: 1, StepNo: 2,
+	}); err != nil {
+		t.Fatalf("Add(second started) error = %v", err)
+	}
+	if got := buffer.CurrentText(); got != "" {
+		t.Fatalf("CurrentText() after new stream = %q, want empty", got)
+	}
+}
+
 func assertDeltaPayload(t *testing.T, event domain.RunEvent, offset int, text string) {
 	t.Helper()
 	if event.Type != "assistant.delta" {

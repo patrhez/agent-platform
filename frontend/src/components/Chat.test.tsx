@@ -81,6 +81,23 @@ describe("Chat", () => {
     expect(screen.getByRole("heading", { name: "Final answer" })).toBeTruthy();
   });
 
+  it("renders a cancelled assistant Message with a Stopped marker", () => {
+    const cancelled: Message = {
+      ...assistantMessage,
+      content: "## Partial verdict",
+      status: "cancelled",
+    };
+    const cancelledRun: Run = { ...run, status: "cancelled" };
+    render(<Chat
+      messages={[userMessage, cancelled]}
+      runs={[cancelledRun]}
+      onSend={vi.fn()}
+    />);
+    expect(screen.getByRole("heading", { name: "Partial verdict" })).toBeTruthy();
+    expect(screen.getByText("Stopped")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toMatch(/cancelled/i);
+  });
+
   it("places a collapsed execution trace between the user question and assistant answer", async () => {
     vi.mocked(api.getTrace).mockResolvedValue({
       steps: [],

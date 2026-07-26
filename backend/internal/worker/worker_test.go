@@ -496,6 +496,96 @@ func (runner *blockingRunner) Run(
 	}
 }
 
+type cancelPartialStore struct {
+	deltaFailureStore
+	events []domain.RunEvent
+}
+
+func (store *cancelPartialStore) AppendRunEvents(
+	_ context.Context,
+	_ string,
+	_ int64,
+	values []domain.RunEvent,
+) ([]domain.RunEvent, error) {
+	store.appendCalls++
+	store.events = append(store.events, values...)
+	return values, nil
+}
+
+func (store *cancelPartialStore) CompleteRun(
+	_ context.Context,
+	completion domain.RunCompletion,
+) ([]domain.RunEvent, error) {
+	store.completion = completion
+	store.completionCalls++
+	return []domain.RunEvent{{RunID: completion.RunID, Seq: 1, Type: "run.cancelled"}}, nil
+}
+
+type cancelAfterStreamRunner struct{}
+
+func (cancelAfterStreamRunner) Run(
+	_ context.Context,
+	_ runtime.AgentInput,
+	_ *domain.Checkpoint,
+	emit func(runtime.RuntimeEvent) error,
+) (runtime.Result, error) {
+	if err := emit(runtime.RuntimeEvent{
+		StepNo: 1,
+		Kind:   "model",
+		Assistant: &runtime.AssistantStreamEvent{
+			StreamID: "run-cancel:1:1",
+			Phase:    "started",
+			Attempt:  1,
+			StepNo:   1,
+		},
+	}); err != nil {
+		return runtime.Result{}, err
+	}
+	if err := emit(runtime.RuntimeEvent{
+		StepNo: 1,
+		Kind:   "model",
+		Assistant: &runtime.AssistantStreamEvent{
+			StreamID: "run-cancel:1:1",
+			Phase:    "delta",
+			Attempt:  1,
+			StepNo:   1,
+			Text:     "## Partial verdict",
+		},
+	}); err != nil {
+		return runtime.Result{}, err
+	}
+	return runtime.Result{}, runtime.ErrRunCancelled
+}
+
+func TestWorkerPromotesPartialAssistantTextOnCancel(t *testing.T) {
+	store := &cancelPartialStore{}
+	worker, err := New(store, cancelAfterStreamRunner{}, events.Noop(), logging.Nop(), "worker-test", 1)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	run := domain.Run{
+		ID:             "run-cancel",
+		Status:         domain.RunStatusRunning,
+		Attempt:        1,
+		ExecutionToken: 3,
+	}
+	if err := worker.Execute(context.Background(), run); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if store.completionCalls != 1 {
+		t.Fatalf("CompleteRun calls = %d, want 1", store.completionCalls)
+	}
+	if store.completion.Status != domain.RunStatusCancelled {
+		t.Errorf("completion.Status = %q, want cancelled", store.completion.Status)
+	}
+	if store.completion.AssistantText != "## Partial verdict" {
+		t.Errorf("completion.AssistantText = %q, want partial stream text", store.completion.AssistantText)
+	}
+	if store.completion.ErrorCode != "cancelled" {
+		t.Errorf("completion.ErrorCode = %q, want cancelled", store.completion.ErrorCode)
+	}
+}
+
 // stubbornRunner blocks until release and ignores context cancellation.
 type stubbornRunner struct {
 	release chan struct{}

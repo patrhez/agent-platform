@@ -60,7 +60,7 @@ Defaults should be conservative (opt-in or high thresholds) so existing short Ru
 
 1. Worker still talks only to `AgentRunner`; domain types stay free of ADK types.
 2. Streaming assistant deltas, tool started/completed, final answer, and Checkpoint resume still work.
-3. Cancel + Steer still complete Runs as `cancelled` without partial assistant Messages.
+3. Cancel + Steer still complete Runs as `cancelled`; partial assistant Message persistence is owned by [2026-07-26-stop-steer-partial-message-design.md](./2026-07-26-stop-steer-partial-message-design.md).
 4. With middleware enabled, oversized tool/history Runs compress before the next model call; compressed state appears in later Checkpoints.
 5. Existing tests for streaming, restore, sanitize, and Worker cancel continue to pass (updated only where the runtime seam moves).
 

@@ -283,6 +283,12 @@ article.assistant {
   margin: 16px 0 0;
   padding: 0 2px;
 }
+article.assistant .stopped-marker {
+  margin-left: 0.5rem;
+  font-weight: 500;
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
 
 /* Typing indicator for an empty streaming draft */
 .typing-indicator {

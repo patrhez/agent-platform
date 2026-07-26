@@ -53,14 +53,16 @@ func writeRunFailureLog(
 	duration time.Duration,
 	cause error,
 ) {
-	logger.Info(
-		ctx,
-		"run finished",
+	fields := []zap.Field{
 		zap.String("run_id", runID),
 		zap.String("status", string(status)),
 		zap.Duration("duration", duration.Round(time.Millisecond)),
 		zap.String("error_code", runFailureCode(cause)),
-	)
+	}
+	if cause != nil {
+		fields = append(fields, zap.String("error", cause.Error()))
+	}
+	logger.Info(ctx, "run finished", fields...)
 }
 
 func runFailureCode(cause error) string {

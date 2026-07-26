@@ -314,7 +314,9 @@ func persistEvents(
 	return persisted, nil
 }
 
-// CompleteRun writes the terminal state, final assistant Message, and terminal event.
+// CompleteRun writes the terminal state, optional assistant Message, and terminal event.
+// Succeeded Runs persist Message status=final; cancelled Runs may persist status=cancelled
+// with partial AssistantText. Failed Runs do not create an assistant Message.
 func (store *Store) CompleteRun(context context.Context, completion domain.RunCompletion) ([]domain.RunEvent, error) {
 	if !isTerminalStatus(completion.Status) {
 		return nil, fmt.Errorf("complete Run %s: non-terminal status %q", completion.RunID, completion.Status)
@@ -330,8 +332,12 @@ func (store *Store) CompleteRun(context context.Context, completion domain.RunCo
 		if err != nil {
 			return err
 		}
-		if err := createAssistantMessage(context, transaction, conversation, run, completion.AssistantText); err != nil {
-			return err
+		if status, ok := assistantMessageStatus(completion.Status); ok {
+			if err := createAssistantMessage(
+				context, transaction, conversation, run, completion.AssistantText, status,
+			); err != nil {
+				return err
+			}
 		}
 		if err := completeRunRecord(context, transaction, run, completion); err != nil {
 			return err
@@ -348,12 +354,24 @@ func (store *Store) CompleteRun(context context.Context, completion domain.RunCo
 	return events, nil
 }
 
+func assistantMessageStatus(status domain.RunStatus) (string, bool) {
+	switch status {
+	case domain.RunStatusSucceeded:
+		return "final", true
+	case domain.RunStatusCancelled:
+		return "cancelled", true
+	default:
+		return "", false
+	}
+}
+
 func createAssistantMessage(
 	context context.Context,
 	transaction *query.Query,
 	conversation *model.Conversation,
 	run *model.Run,
 	content string,
+	status string,
 ) error {
 	if content == "" {
 		return nil
@@ -365,7 +383,7 @@ func createAssistantMessage(
 		Seq:            conversation.NextMessageSeq,
 		Role:           "assistant",
 		Content:        content,
-		Status:         "final",
+		Status:         status,
 		RunID:          &run.ID,
 		CreatedAt:      now,
 		FinalizedAt:    &now,

@@ -61,4 +61,28 @@ describe("conversation event projection", () => {
     expect(state.detail).toEqual(detail);
     expect(assistantDraft(state, runID)).toBeUndefined();
   });
+
+  it("clears the draft when a cancelled assistant Message appears in the snapshot", () => {
+    let state = applyEvent(initialState, runEvent(1, "assistant.started", {
+      streamId: "run-1:1:1", attempt: 1, stepNo: 1, offset: 0,
+    }));
+    state = applyEvent(state, runEvent(2, "assistant.delta", {
+      streamId: "run-1:1:1", attempt: 1, stepNo: 1, offset: 0, text: "partial",
+    }));
+    expect(assistantDraft(state, runID)?.content).toBe("partial");
+
+    const detail: ConversationDetail = {
+      conversation: { id: "conversation", title: "title", createdAt: "now", updatedAt: "now" },
+      messages: [{
+        id: "assistant", conversationId: "conversation", seq: 2, role: "assistant",
+        content: "partial", status: "cancelled", runId: runID, createdAt: "now",
+      }],
+      runs: [{
+        id: runID, conversationId: "conversation", triggerMessageId: "message", queueSeq: 1,
+        status: "cancelled", attempt: 1, createdAt: "now",
+      }],
+    };
+    state = applyEvent(state, { runID: "snapshot", seq: 3, type: "snapshot", payload: { detail } });
+    expect(assistantDraft(state, runID)).toBeUndefined();
+  });
 });

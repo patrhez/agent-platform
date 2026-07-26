@@ -123,8 +123,11 @@ export function Chat({
           </article>
           {turn.run && <RunTrace run={turn.run} events={eventsByRunID[turn.run.id] ?? []} />}
           {turn.run && <RunStatus run={turn.run} />}
-          {turn.assistants.map((message) => <article className="assistant" key={message.id}>
-            <b>Agent</b>
+          {turn.assistants.map((message) => <article
+            className={message.status === "cancelled" ? "assistant cancelled" : "assistant"}
+            key={message.id}
+          >
+            <b>Agent{message.status === "cancelled" ? <span className="stopped-marker">Stopped</span> : null}</b>
             <MarkdownContent content={message.content} />
           </article>)}
           {showDraft && draft && <article
