@@ -80,7 +80,7 @@ func (executor *WorkspaceExecutor) Call(ctx context.Context, request ToolRequest
 		return ToolResult{}, err
 	}
 	// Tool-level failures (bad pathPrefix, missing file, etc.) are returned to the model
-	// so the ReAct loop can recover instead of failing the entire Run.
+	// so the agent can recover instead of failing the entire Run.
 	if result.IsError {
 		return ToolResult{
 			Content: content,

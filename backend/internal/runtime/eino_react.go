@@ -3,9 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -100,179 +98,17 @@ func (runner *EinoRunner) execute(
 	toolset *mcpToolset,
 	emit func(RuntimeEvent) error,
 ) (Result, error) {
-	// Resume may land after an assistant tool_calls message and before tool results.
-	// Drain those with the platform tool path before handing control to ADK.
-	for hasPendingToolCalls(state.Messages) {
-		nextOrdinal, err := runner.executeTools(ctx, runID, &state, ordinal, toolset, emit)
-		if err != nil {
-			return Result{}, err
-		}
-		ordinal = nextOrdinal
+	// A checkpoint can contain an assistant tool-call message without a matching
+	// tool result. Complete that recovery boundary before entering ADK.
+	var err error
+	ordinal, err = runner.resumePendingToolCalls(ctx, runID, &state, ordinal, toolset, emit)
+	if err != nil {
+		return Result{}, err
 	}
 	if state.Iteration >= runner.definition.Agent.Limits.MaxSteps {
 		return Result{}, ErrStepLimit
 	}
 	return runner.runWithADK(ctx, runID, attempt, state, ordinal, toolset, emit)
-}
-
-func streamModelResponse(
-	ctx context.Context,
-	boundModel model.ToolCallingChatModel,
-	messages []*schema.Message,
-	streamID string,
-	attempt int,
-	stepNo int,
-	emit func(RuntimeEvent) error,
-) (*schema.Message, error) {
-	stream, err := boundModel.Stream(ctx, messages)
-	if err != nil {
-		return nil, fmt.Errorf("stream Agent response: %w", err)
-	}
-	defer stream.Close()
-
-	chunks := make([]*schema.Message, 0)
-	started := false
-	offset := 0
-	for {
-		chunk, receiveErr := stream.Recv()
-		if errors.Is(receiveErr, io.EOF) {
-			break
-		}
-		if receiveErr != nil {
-			return nil, fmt.Errorf("receive Agent response stream: %w", receiveErr)
-		}
-		if chunk == nil {
-			continue
-		}
-		safeChunk := sanitizeAssistantMessage(chunk)
-		chunks = append(chunks, safeChunk)
-		if safeChunk.Content == "" {
-			continue
-		}
-		if !started {
-			if err := emitAssistantStreamEvent(emit, AssistantStreamEvent{
-				StreamID: streamID,
-				Phase:    "started",
-				Attempt:  attempt,
-				StepNo:   stepNo,
-			}); err != nil {
-				return nil, err
-			}
-			started = true
-		}
-		if err := emitAssistantStreamEvent(emit, AssistantStreamEvent{
-			StreamID: streamID,
-			Phase:    "delta",
-			Attempt:  attempt,
-			StepNo:   stepNo,
-			Offset:   offset,
-			Text:     safeChunk.Content,
-		}); err != nil {
-			return nil, err
-		}
-		offset++
-	}
-	if len(chunks) == 0 {
-		return nil, fmt.Errorf("receive Agent response stream: empty stream")
-	}
-	response, err := schema.ConcatMessages(chunks)
-	if err != nil {
-		return nil, fmt.Errorf("concatenate Agent response stream: %w", err)
-	}
-	return sanitizeAssistantMessage(response), nil
-}
-
-func emitAssistantStreamEvent(emit func(RuntimeEvent) error, assistant AssistantStreamEvent) error {
-	if err := emit(RuntimeEvent{
-		StepNo:    assistant.StepNo,
-		Kind:      "model",
-		Summary:   "Agent is generating a response",
-		Assistant: &assistant,
-	}); err != nil {
-		return fmt.Errorf("emit assistant %s event: %w", assistant.Phase, err)
-	}
-	return nil
-}
-
-func (runner *EinoRunner) executeTools(
-	ctx context.Context,
-	runID string,
-	state *checkpointState,
-	ordinal int,
-	toolset *mcpToolset,
-	emit func(RuntimeEvent) error,
-) (int, error) {
-	lastMessage := state.Messages[len(state.Messages)-1]
-	for index := range lastMessage.ToolCalls {
-		call := &lastMessage.ToolCalls[index]
-		request, binding, err := toolRequest(runID, call, toolset)
-		if err != nil {
-			return ordinal, err
-		}
-		if err := emit(RuntimeEvent{
-			StepNo:  state.Iteration,
-			Kind:    "tool",
-			Summary: "Agent started " + request.Name,
-			Tool:    &request,
-		}); err != nil {
-			return ordinal, err
-		}
-		result, err := callWithRetry(ctx, binding.executor, request)
-		if err != nil {
-			return ordinal, err
-		}
-		state.Messages = append(state.Messages, schema.ToolMessage(
-			result.Content,
-			call.ID,
-			schema.WithToolName(call.Function.Name),
-		))
-		checkpoint, err := newCheckpoint(runID, ordinal+1, *state)
-		if err != nil {
-			return ordinal, err
-		}
-		ordinal++
-		if err := emit(RuntimeEvent{
-			StepNo:     state.Iteration,
-			Kind:       "tool",
-			Summary:    "Agent completed " + request.Name + ": " + result.Summary,
-			Tool:       &request,
-			ToolResult: &result,
-			Checkpoint: checkpoint,
-		}); err != nil {
-			return ordinal, err
-		}
-	}
-	return ordinal, nil
-}
-
-func toolRequest(runID string, call *schema.ToolCall, toolset *mcpToolset) (ToolRequest, toolBinding, error) {
-	binding, found := toolset.binding(call.Function.Name)
-	if !found {
-		return ToolRequest{}, toolBinding{}, fmt.Errorf("model requested non-allowlisted Tool %q", call.Function.Name)
-	}
-	if !json.Valid([]byte(call.Function.Arguments)) {
-		return ToolRequest{}, toolBinding{}, fmt.Errorf("model returned invalid JSON for Tool %s", call.Function.Name)
-	}
-	if call.ID == "" {
-		return ToolRequest{}, toolBinding{}, fmt.Errorf("model returned a Tool call without an ID")
-	}
-	idempotencyKey := toolCallID(call)
-	if idempotencyKey == "" {
-		idempotencyKey = ulid.Make().String()
-		if call.Extra == nil {
-			call.Extra = map[string]any{}
-		}
-		call.Extra["platform_tool_call_id"] = idempotencyKey
-	}
-	arguments := json.RawMessage(call.Function.Arguments)
-	return ToolRequest{
-		ID:             idempotencyKey,
-		IdempotencyKey: runID + ":" + idempotencyKey,
-		ServerKey:      binding.serverKey,
-		Name:           binding.mcpName,
-		Arguments:      arguments,
-		SafeArguments:  safeArguments(arguments, binding.safeKeys),
-	}, binding, nil
 }
 
 func restoreState(input AgentInput, checkpoint *domain.Checkpoint, systemPrompt string) (checkpointState, int, error) {
@@ -355,43 +191,6 @@ func sanitizeCheckpointState(state checkpointState) checkpointState {
 	return result
 }
 
-func hasPendingToolCalls(messages []*schema.Message) bool {
-	if len(messages) == 0 {
-		return false
-	}
-	last := messages[len(messages)-1]
-	return last.Role == schema.Assistant && len(last.ToolCalls) > 0
-}
-
-func callWithRetry(ctx context.Context, executor ToolExecutor, request ToolRequest) (ToolResult, error) {
-	var lastError error
-	for attempt := 0; attempt < 3; attempt++ {
-		result, err := executor.Call(ctx, request)
-		if err == nil {
-			return result, nil
-		}
-		lastError = err
-		if ctx.Err() != nil || attempt == 2 {
-			break
-		}
-		if err := waitForRetry(ctx, time.Duration(attempt+1)*200*time.Millisecond); err != nil {
-			return ToolResult{}, err
-		}
-	}
-	return ToolResult{}, fmt.Errorf("Tool %s failed after retries: %w", request.Name, lastError)
-}
-
-func waitForRetry(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
 func sanitizeAssistantMessage(message *schema.Message) *schema.Message {
 	copy := *message
 	copy.ReasoningContent = ""
@@ -415,16 +214,4 @@ func sanitizeMessageExtra(extra map[string]any) map[string]any {
 		result[key] = value
 	}
 	return result
-}
-
-func toolCallID(call *schema.ToolCall) string {
-	if call.Extra == nil {
-		return ""
-	}
-	value, found := call.Extra["platform_tool_call_id"]
-	if !found {
-		return ""
-	}
-	id, _ := value.(string)
-	return id
 }

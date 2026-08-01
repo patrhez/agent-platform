@@ -36,7 +36,7 @@ type ModelDefinition struct {
 	Temperature float32 `yaml:"temperature"`
 }
 
-// LimitDefinition bounds one Run's time and ReAct iterations.
+// LimitDefinition bounds one Run's time and agent iterations.
 type LimitDefinition struct {
 	MaxSteps          int `yaml:"max_steps"`
 	RunTimeoutSeconds int `yaml:"run_timeout_seconds"`

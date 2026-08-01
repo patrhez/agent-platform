@@ -17,7 +17,7 @@ const (
 )
 
 var (
-	// ErrStepLimit indicates that a Run exceeded its configured ReAct step limit.
+	// ErrStepLimit indicates that a Run exceeded its configured agent step limit.
 	ErrStepLimit = errors.New("Agent step limit exceeded")
 	// ErrRunCancelled indicates that the user cancelled the Run during execution.
 	ErrRunCancelled = errors.New("Run cancelled")

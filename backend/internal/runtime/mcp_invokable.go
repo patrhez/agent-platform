@@ -2,13 +2,11 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
-	"github.com/oklog/ulid/v2"
 )
 
 // toolEmitHooks are platform callbacks around one MCP tool invocation.
@@ -77,21 +75,5 @@ func (mcpTool *mcpInvokableTool) InvokableRun(
 }
 
 func (mcpTool *mcpInvokableTool) buildRequest(callID string, argumentsInJSON string) (ToolRequest, error) {
-	if !json.Valid([]byte(argumentsInJSON)) {
-		return ToolRequest{}, fmt.Errorf("model returned invalid JSON for Tool %s", mcpTool.binding.mcpName)
-	}
-	// tool_calls.id is char(26). Provider call IDs (e.g. OpenAI call_00_...) can
-	// exceed that, so durable ID is always a platform ULID. CallID keeps the
-	// provider id for ToolMessage pairing when ToolsNode supplies one.
-	platformID := ulid.Make().String()
-	arguments := json.RawMessage(argumentsInJSON)
-	return ToolRequest{
-		ID:             platformID,
-		CallID:         callID,
-		IdempotencyKey: mcpTool.hooks.RunID + ":" + platformID,
-		ServerKey:      mcpTool.binding.serverKey,
-		Name:           mcpTool.binding.mcpName,
-		Arguments:      arguments,
-		SafeArguments:  safeArguments(arguments, mcpTool.binding.safeKeys),
-	}, nil
+	return buildToolRequest(mcpTool.hooks.RunID, mcpTool.binding, callID, argumentsInJSON, "")
 }

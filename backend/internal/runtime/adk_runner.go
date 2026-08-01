@@ -75,9 +75,8 @@ func (runner *EinoRunner) newADKAgent(
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
 				Tools: invokables,
-				// Match the previous hand-rolled ReAct loop: one Tool PersistBoundary
-				// (and Checkpoint ordinal) at a time. Parallel finishes race on ordinal
-				// and on the worker emit path.
+				// Tool completions must remain serialized so checkpoint ordinals and
+				// worker persistence boundaries are deterministic.
 				ExecuteSequentially: true,
 			},
 		},
@@ -229,6 +228,18 @@ func (session *adkEmitSession) consumeAssistantStream(
 		return nil, fmt.Errorf("concatenate ADK assistant stream: %w", err)
 	}
 	return sanitizeAssistantMessage(response), nil
+}
+
+func emitAssistantStreamEvent(emit func(RuntimeEvent) error, assistant AssistantStreamEvent) error {
+	if err := emit(RuntimeEvent{
+		StepNo:    assistant.StepNo,
+		Kind:      "model",
+		Summary:   "Agent is generating a response",
+		Assistant: &assistant,
+	}); err != nil {
+		return fmt.Errorf("emit assistant %s event: %w", assistant.Phase, err)
+	}
+	return nil
 }
 
 func (session *adkEmitSession) emitAssistantBoundary(message *schema.Message) error {

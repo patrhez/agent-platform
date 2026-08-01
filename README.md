@@ -19,7 +19,7 @@ Conversation record.
 - **Follow-up control** — while a Run is active, send with **Queue** (append) or **Steer** (cancel active, then start a new Run); **Stop** cancels active Runs. Interrupted streams keep a partial assistant Message marked Stopped; cancelled text is not fed into the next model context.
 - **Conversation delete** — single-row delete and multi-select bulk delete (soft delete; confirmation dialog).
 - **Read-only Workspace MCP** — host-mounted repositories via `workspace.list_repositories`, `file.list`, `file.stat`, `code.search`, and `file.read`. Only Workspace MCP receives `REPOS_DIR`.
-- **Eino ReAct runtime** — versioned Agent config and Skills bundle, OpenAI-compatible LLM gateway, step/time limits, and context summarization / reduction.
+- **Eino ADK agent runtime** — versioned Agent config and Skills bundle, OpenAI-compatible LLM gateway, step/time limits, and context summarization / reduction.
 - **API + Worker roles** — MySQL-backed Run leases and checkpoints; configurable `WORKER_CONCURRENCY` per Worker process.
 - **Recovery demos** — Worker restart, API SSE reconnect, and durable-streaming e2e scripts; optional k3d HA lab for multi-API / multi-Worker failover.
 
@@ -54,7 +54,7 @@ agent-worker --> OpenAI-compatible LLM gateway
 |---|---|---|
 | **Web** | Render chat, open SSE for active Runs, send user turns / Stop / Steer / delete | Talk to Redis, MySQL, LLM, or repository paths |
 | **API** | AuthZ demo principal, write Conversation/Run rows, serve snapshots, hold SSE, replay `run_events` | Run Eino, call MCP, or read `REPOS_DIR` |
-| **Worker** | Lease Runs, execute Eino ReAct, persist boundaries/deltas, publish Redis hints after commit | Hold browser connections or own Conversation truth in memory |
+| **Worker** | Lease Runs, execute the Eino ADK agent, persist boundaries/deltas, publish Redis hints after commit | Hold browser connections or own Conversation truth in memory |
 | **Workspace MCP** | Validate paths, enforce limits, expose allowlisted read-only tools | Accept writes or expose host paths to API/UI |
 | **MySQL** | Source of truth for Conversations, Messages, Runs, leases, checkpoints, ordered `run_events` | — |
 | **Redis** | Pub/Sub wake-up: `{runId, seq}` after durable commit | Store answers, leases, checkpoints, or event payloads |
@@ -76,7 +76,7 @@ backend/   (one module, two binaries: cmd/api and cmd/worker)
   worker/         application: claim loop, lease renewal, stream buffer, completion
   store/          application persistence API over GORM Gen
   domain/         entities, FollowUpMode, Run pins, execution boundaries
-  runtime/        Agent adapter (Eino ReAct) — swappable, does not own DB
+  runtime/        Agent adapter (Eino ADK) — swappable, does not own DB
   events/         Redis notifier / subscriber (hint channel only)
   model/ + query/ persistence models + GORM Gen (infrastructure)
   config/ logging/ database/  cross-cutting infrastructure

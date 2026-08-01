@@ -5,88 +5,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
-
-type streamingTestModel struct {
-	chunks []*schema.Message
-}
-
-func (streamingModel *streamingTestModel) Generate(
-	context.Context,
-	[]*schema.Message,
-	...model.Option,
-) (*schema.Message, error) {
-	return nil, nil
-}
-
-func (streamingModel *streamingTestModel) Stream(
-	context.Context,
-	[]*schema.Message,
-	...model.Option,
-) (*schema.StreamReader[*schema.Message], error) {
-	return schema.StreamReaderFromArray(streamingModel.chunks), nil
-}
-
-func (streamingModel *streamingTestModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
-	return streamingModel, nil
-}
-
-func TestEinoRunnerStreamsAssistantContent(t *testing.T) {
-	first := schema.AssistantMessage("hello ", nil)
-	second := schema.AssistantMessage("world", nil)
-	second.ReasoningContent = "private reasoning"
-	second.Extra = map[string]any{
-		"reasoning-content": "private reasoning metadata",
-		"request-id":        "request-1",
-	}
-	events := make([]AssistantStreamEvent, 0, 3)
-
-	response, err := streamModelResponse(
-		context.Background(),
-		&streamingTestModel{chunks: []*schema.Message{first, second}},
-		[]*schema.Message{schema.UserMessage("test")},
-		"run-1:2:1",
-		2,
-		1,
-		func(event RuntimeEvent) error {
-			if event.Assistant != nil {
-				events = append(events, *event.Assistant)
-			}
-			return nil
-		},
-	)
-	if err != nil {
-		t.Fatalf("streamModelResponse() error = %v", err)
-	}
-	if response.Content != "hello world" {
-		t.Errorf("response.Content = %q, want %q", response.Content, "hello world")
-	}
-	if response.ReasoningContent != "" {
-		t.Errorf("response.ReasoningContent = %q, want empty", response.ReasoningContent)
-	}
-	if _, found := response.Extra["reasoning-content"]; found {
-		t.Error("response.Extra contains private reasoning metadata")
-	}
-	if response.Extra["request-id"] != "request-1" {
-		t.Errorf("response.Extra request-id = %v, want request-1", response.Extra["request-id"])
-	}
-
-	want := []AssistantStreamEvent{
-		{StreamID: "run-1:2:1", Phase: "started", Attempt: 2, StepNo: 1, Offset: 0},
-		{StreamID: "run-1:2:1", Phase: "delta", Attempt: 2, StepNo: 1, Offset: 0, Text: "hello "},
-		{StreamID: "run-1:2:1", Phase: "delta", Attempt: 2, StepNo: 1, Offset: 1, Text: "world"},
-	}
-	if len(events) != len(want) {
-		t.Fatalf("len(events) = %d, want %d: %#v", len(events), len(want), events)
-	}
-	for index := range want {
-		if events[index] != want[index] {
-			t.Errorf("events[%d] = %#v, want %#v", index, events[index], want[index])
-		}
-	}
-}
 
 func TestRestoreStateIncludesOrderedConversationHistory(t *testing.T) {
 	t.Parallel()
@@ -205,7 +125,7 @@ func TestToolRequestRoutesModelToolNamesToConfiguredServers(t *testing.T) {
 			Arguments: `{"repo":"agent-platform","query":"stream","workspaceRoot":"/private"}`,
 		},
 	}
-	request, binding, err := toolRequest("run-id", call, toolset)
+	request, binding, err := toolRequestFromCall("run-id", call, toolset)
 	if err != nil {
 		t.Fatalf("toolRequest() error = %v", err)
 	}
@@ -222,7 +142,7 @@ func TestToolRequestRoutesModelToolNamesToConfiguredServers(t *testing.T) {
 
 func TestToolRequestRejectsUnknownModelTool(t *testing.T) {
 	toolset := &mcpToolset{bindings: map[string]toolBinding{}}
-	_, _, err := toolRequest("run-id", &schema.ToolCall{
+	_, _, err := toolRequestFromCall("run-id", &schema.ToolCall{
 		ID: "provider-call-id",
 		Function: schema.FunctionCall{
 			Name:      "code.search",
@@ -230,6 +150,6 @@ func TestToolRequestRejectsUnknownModelTool(t *testing.T) {
 		},
 	}, toolset)
 	if err == nil {
-		t.Fatal("toolRequest() error = nil, want rejection for unsupported model Tool name")
+		t.Fatal("toolRequestFromCall() error = nil, want rejection for unsupported model Tool name")
 	}
 }

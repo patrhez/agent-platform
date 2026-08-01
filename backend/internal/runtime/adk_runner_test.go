@@ -7,8 +7,89 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
+
+type streamingTestModel struct {
+	chunks []*schema.Message
+}
+
+func (streamingModel *streamingTestModel) Generate(
+	context.Context,
+	[]*schema.Message,
+	...model.Option,
+) (*schema.Message, error) {
+	return nil, nil
+}
+
+func (streamingModel *streamingTestModel) Stream(
+	context.Context,
+	[]*schema.Message,
+	...model.Option,
+) (*schema.StreamReader[*schema.Message], error) {
+	return schema.StreamReaderFromArray(streamingModel.chunks), nil
+}
+
+func (streamingModel *streamingTestModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return streamingModel, nil
+}
+
+func TestADKEmitSessionConsumesAssistantStream(t *testing.T) {
+	first := schema.AssistantMessage("hello ", nil)
+	second := schema.AssistantMessage("world", nil)
+	second.ReasoningContent = "private reasoning"
+	second.Extra = map[string]any{
+		"reasoning-content": "private reasoning metadata",
+		"request-id":        "request-1",
+	}
+	var events []AssistantStreamEvent
+	session := &adkEmitSession{
+		runID:   "run-1",
+		attempt: 2,
+		state:   &checkpointState{},
+		emit: func(event RuntimeEvent) error {
+			if event.Assistant != nil {
+				events = append(events, *event.Assistant)
+			}
+			return nil
+		},
+	}
+
+	response, err := session.consumeAssistantStream(
+		context.Background(),
+		schema.StreamReaderFromArray([]*schema.Message{first, second}),
+	)
+	if err != nil {
+		t.Fatalf("consumeAssistantStream() error = %v", err)
+	}
+	if response.Content != "hello world" {
+		t.Errorf("response.Content = %q, want %q", response.Content, "hello world")
+	}
+	if response.ReasoningContent != "" {
+		t.Errorf("response.ReasoningContent = %q, want empty", response.ReasoningContent)
+	}
+	if _, found := response.Extra["reasoning-content"]; found {
+		t.Error("response.Extra contains private reasoning metadata")
+	}
+	if response.Extra["request-id"] != "request-1" {
+		t.Errorf("response.Extra request-id = %v, want request-1", response.Extra["request-id"])
+	}
+
+	want := []AssistantStreamEvent{
+		{StreamID: "run-1:2:1", Phase: "started", Attempt: 2, StepNo: 1, Offset: 0},
+		{StreamID: "run-1:2:1", Phase: "delta", Attempt: 2, StepNo: 1, Offset: 0, Text: "hello "},
+		{StreamID: "run-1:2:1", Phase: "delta", Attempt: 2, StepNo: 1, Offset: 1, Text: "world"},
+	}
+	if len(events) != len(want) {
+		t.Fatalf("events = %#v, want %#v", events, want)
+	}
+	for index := range want {
+		if events[index] != want[index] {
+			t.Errorf("events[%d] = %#v, want %#v", index, events[index], want[index])
+		}
+	}
+}
 
 func TestADKRunnerStreamsFinalAnswer(t *testing.T) {
 	first := schema.AssistantMessage("hello ", nil)
