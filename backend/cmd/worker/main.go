@@ -52,7 +52,7 @@ func run(ctx context.Context) error {
 		logger.Error(ctx, "load Agent definition failed", zap.Error(err))
 		return err
 	}
-	runner, err := runtime.NewEinoRunner(definition, configuration.LLMBaseURL, configuration.LLMAPIKey)
+	runner, err := runtime.NewEinoRunner(definition, configuration.LLMBaseURL, configuration.LLMAPIKey, logger)
 	if err != nil {
 		logger.Error(ctx, "create Eino runner failed", zap.Error(err))
 		return err

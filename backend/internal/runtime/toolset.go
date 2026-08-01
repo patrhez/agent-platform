@@ -8,6 +8,7 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/eino-contrib/jsonschema"
+	"github.com/patrhez/agent-platform/backend/internal/logging"
 )
 
 // toolBinding routes one model-visible Tool name to its MCP server and executor.
@@ -119,13 +120,18 @@ func modelToolInfo(mcpName string, metadata toolMetadata) (*schema.ToolInfo, err
 	return info, nil
 }
 
-// newStreamableExecutor is the production executorFactory backed by Streamable HTTP MCP.
-func newStreamableExecutor(ctx context.Context, server MCPServer) (mcpExecutor, error) {
-	executor, err := NewWorkspaceExecutor(ctx, server.URL, server.AllowedTools)
-	if err != nil {
-		return nil, err
+// newStreamableExecutor returns the production executorFactory backed by Streamable HTTP MCP.
+func newStreamableExecutor(logger logging.Logger) executorFactory {
+	if logger == nil {
+		logger = logging.Nop()
 	}
-	return &streamableExecutor{WorkspaceExecutor: executor}, nil
+	return func(ctx context.Context, server MCPServer) (mcpExecutor, error) {
+		executor, err := NewWorkspaceExecutor(ctx, server.Key, server.URL, server.AllowedTools, logger)
+		if err != nil {
+			return nil, err
+		}
+		return &streamableExecutor{WorkspaceExecutor: executor}, nil
+	}
 }
 
 // streamableExecutor adapts WorkspaceExecutor's MCP metadata to the toolMetadata shape.

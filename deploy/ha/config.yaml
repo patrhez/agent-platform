@@ -1,3 +1,7 @@
+# Shared non-secret env for API and Worker.
+# scripts/ha/up.sh overlays LOG_LEVEL and LOG_MAX_AGE_DAYS from the repo .env
+# when present (default LOG_LEVEL=info). Set LOG_LEVEL=debug in .env to enable
+# message-path debug logs, then rerun ./scripts/ha/up.sh.
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -237,6 +237,7 @@ func (worker *Worker) executeClaimed(ctx context.Context, pool *runPool, run dom
 	worker.logger.Info(
 		ctx,
 		"run claimed",
+		zap.String("conversation_id", run.ConversationID),
 		zap.String("run_id", run.ID),
 		zap.String("worker_id", worker.workerID),
 		zap.Int("attempt", run.Attempt),
@@ -276,9 +277,11 @@ func (worker *Worker) waitInFlight(ctx context.Context, pool *runPool) {
 // Execute runs one claimed Run and persists a terminal outcome when it still owns the lease.
 func (worker *Worker) Execute(ctx context.Context, run domain.Run) error {
 	startedAt := time.Now()
+	ctx, _ = logging.EnsureTraceID(ctx)
 	worker.logger.Info(
 		ctx,
 		"run started",
+		zap.String("conversation_id", run.ConversationID),
 		zap.String("run_id", run.ID),
 		zap.String("worker_id", worker.workerID),
 		zap.Int("attempt", run.Attempt),
@@ -298,14 +301,13 @@ func (worker *Worker) Execute(ctx context.Context, run domain.Run) error {
 	if err != nil {
 		return err
 	}
+	agentInput := runtime.AgentInput{
+		RunID: run.ID, Attempt: run.Attempt, Messages: runtimeMessages(execution.Messages),
+	}
+	writeRuntimeInputLog(ctx, worker.logger, run, agentInput, checkpoint != nil)
 	runContext, stopRenewal, leaseLost := worker.renewLease(ctx, run)
 	emit, finish := worker.persistEmitter(runContext, run)
-	result, runError := worker.runner.Run(
-		runContext,
-		runtime.AgentInput{RunID: run.ID, Attempt: run.Attempt, Messages: runtimeMessages(execution.Messages)},
-		checkpoint,
-		emit,
-	)
+	result, runError := worker.runner.Run(runContext, agentInput, checkpoint, emit)
 	partial, flushError := finish()
 	if runError == nil && flushError != nil {
 		runError = flushError
@@ -320,7 +322,7 @@ func (worker *Worker) Execute(ctx context.Context, run domain.Run) error {
 		if errors.Is(runError, runtime.ErrRunCancelled) {
 			status = domain.RunStatusCancelled
 		}
-		writeRunFailureLog(ctx, worker.logger, run.ID, status, time.Since(startedAt), runError)
+		writeRunFailureLog(ctx, worker.logger, run, status, time.Since(startedAt), runError)
 		return completionError
 	}
 	completionError := worker.completeSuccess(ctx, run, result)
@@ -328,6 +330,7 @@ func (worker *Worker) Execute(ctx context.Context, run domain.Run) error {
 		worker.logger.Info(
 			ctx,
 			"run finished",
+			zap.String("conversation_id", run.ConversationID),
 			zap.String("run_id", run.ID),
 			zap.String("status", string(domain.RunStatusSucceeded)),
 			zap.Duration("duration", time.Since(startedAt).Round(time.Millisecond)),
@@ -381,6 +384,7 @@ func (worker *Worker) persistEmitter(
 		if err != nil {
 			return err
 		}
+		writePersistedEventsLog(ctx, worker.logger, run, "append_run_events", persisted)
 		worker.publish(ctx, persisted)
 		return nil
 	}, time.Now)
@@ -418,7 +422,9 @@ func (worker *Worker) persistEmitter(
 		if err != nil {
 			return err
 		}
-		writeToolBoundaryLog(ctx, worker.logger, run.ID, event, startedAt, now)
+		writeToolBoundaryLog(ctx, worker.logger, run, event, startedAt, now)
+		writePersistedBoundaryLog(ctx, worker.logger, run, event, boundary)
+		writePersistedEventsLog(ctx, worker.logger, run, "persist_boundary", persisted)
 		worker.publish(ctx, persisted)
 		return nil
 	}
@@ -512,16 +518,19 @@ func (worker *Worker) completeSuccess(ctx context.Context, run domain.Run, resul
 	if err != nil {
 		return err
 	}
-	persisted, err := worker.store.CompleteRun(ctx, domain.RunCompletion{
+	completion := domain.RunCompletion{
 		RunID:          run.ID,
 		ExecutionToken: run.ExecutionToken,
 		Status:         domain.RunStatusSucceeded,
 		AssistantText:  result.Final,
 		Event:          event,
-	})
+	}
+	persisted, err := worker.store.CompleteRun(ctx, completion)
 	if err != nil {
 		return err
 	}
+	writeCompleteRunLog(ctx, worker.logger, run, completion)
+	writePersistedEventsLog(ctx, worker.logger, run, "complete_run", persisted)
 	worker.publish(ctx, persisted)
 	return nil
 }
@@ -541,7 +550,7 @@ func (worker *Worker) completeFailure(ctx context.Context, run domain.Run, cause
 	if err != nil {
 		return err
 	}
-	persisted, err := worker.store.CompleteRun(ctx, domain.RunCompletion{
+	completion := domain.RunCompletion{
 		RunID:          run.ID,
 		ExecutionToken: run.ExecutionToken,
 		Status:         status,
@@ -549,10 +558,13 @@ func (worker *Worker) completeFailure(ctx context.Context, run domain.Run, cause
 		ErrorCode:      failure.Code,
 		ErrorMessage:   failure.Message,
 		Event:          event,
-	})
+	}
+	persisted, err := worker.store.CompleteRun(ctx, completion)
 	if err != nil {
 		return err
 	}
+	writeCompleteRunLog(ctx, worker.logger, run, completion)
+	writePersistedEventsLog(ctx, worker.logger, run, "complete_run", persisted)
 	worker.publish(ctx, persisted)
 	return nil
 }

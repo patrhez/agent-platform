@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/patrhez/agent-platform/backend/internal/logging"
+	"go.uber.org/zap"
 )
 
 const (
@@ -20,17 +23,33 @@ const (
 
 // WorkspaceExecutor invokes an allowlisted MCP Tool set over Streamable HTTP.
 type WorkspaceExecutor struct {
-	session *mcp.ClientSession
-	allowed map[string]struct{}
-	tools   map[string]*mcp.Tool
+	serverKey string
+	endpoint  string
+	session   *mcp.ClientSession
+	allowed   map[string]struct{}
+	tools     map[string]*mcp.Tool
+	logger    logging.Logger
 }
 
 // NewWorkspaceExecutor connects to an MCP server and validates its Tool list.
 func NewWorkspaceExecutor(
 	ctx context.Context,
+	serverKey string,
 	endpoint string,
 	allowedTools []string,
+	logger logging.Logger,
 ) (*WorkspaceExecutor, error) {
+	if logger == nil {
+		logger = logging.Nop()
+	}
+	logger.Debug(
+		ctx,
+		"mcp server connecting",
+		zap.String("server_key", serverKey),
+		zap.String("mcp_endpoint", endpoint),
+		zap.Strings("allowlisted_tools", append([]string(nil), allowedTools...)),
+		zap.Int("allowlisted_count", len(allowedTools)),
+	)
 	client := mcp.NewClient(&mcp.Implementation{Name: "agent-worker", Version: "0.1.0"}, nil)
 	httpClient := &http.Client{Timeout: workspaceToolTimeout}
 	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
@@ -41,13 +60,26 @@ func NewWorkspaceExecutor(
 	if err != nil {
 		return nil, fmt.Errorf("connect MCP server %s: %w", endpoint, err)
 	}
-	executor := &WorkspaceExecutor{session: session, allowed: asSet(allowedTools)}
+	executor := &WorkspaceExecutor{
+		serverKey: serverKey,
+		endpoint:  endpoint,
+		session:   session,
+		allowed:   asSet(allowedTools),
+		logger:    logger,
+	}
 	if err := executor.validateTools(ctx); err != nil {
 		if closeErr := session.Close(); closeErr != nil {
 			return nil, errors.Join(err, fmt.Errorf("close MCP session: %w", closeErr))
 		}
 		return nil, err
 	}
+	logger.Debug(
+		ctx,
+		"mcp server connected",
+		zap.String("server_key", serverKey),
+		zap.String("mcp_endpoint", endpoint),
+		zap.Int("bound_tool_count", len(executor.tools)),
+	)
 	return executor, nil
 }
 
@@ -104,9 +136,27 @@ func (executor *WorkspaceExecutor) validateTools(ctx context.Context) error {
 		return fmt.Errorf("list MCP Tools: %w", err)
 	}
 	available := make(map[string]*mcp.Tool, len(result.Tools))
+	availableNames := make([]string, 0, len(result.Tools))
 	for _, tool := range result.Tools {
 		available[tool.Name] = tool
+		availableNames = append(availableNames, tool.Name)
 	}
+	sort.Strings(availableNames)
+	allowlistedNames := make([]string, 0, len(executor.allowed))
+	for name := range executor.allowed {
+		allowlistedNames = append(allowlistedNames, name)
+	}
+	sort.Strings(allowlistedNames)
+	executor.logger.Debug(
+		ctx,
+		"mcp tools listed",
+		zap.String("server_key", executor.serverKey),
+		zap.String("mcp_endpoint", executor.endpoint),
+		zap.Strings("available_tools", availableNames),
+		zap.Int("available_count", len(availableNames)),
+		zap.Strings("allowlisted_tools", allowlistedNames),
+		zap.Int("allowlisted_count", len(allowlistedNames)),
+	)
 	executor.tools = make(map[string]*mcp.Tool, len(executor.allowed))
 	for name := range executor.allowed {
 		tool, found := available[name]

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/patrhez/agent-platform/backend/internal/domain"
+	"github.com/patrhez/agent-platform/backend/internal/logging"
 	"go.uber.org/zap"
 )
 
@@ -26,10 +27,18 @@ func (server *Server) streamRunEvents(responseWriter http.ResponseWriter, reques
 		writeError(ctx, server.logger, responseWriter, http.StatusBadRequest, "invalid_event_cursor", err)
 		return
 	}
-	if _, err := server.store.GetRunSnapshot(ctx, principal.UserID(), runID); err != nil {
+	snapshot, err := server.store.GetRunSnapshot(ctx, principal.UserID(), runID)
+	if err != nil {
 		writeStoreError(ctx, server.logger, responseWriter, err)
 		return
 	}
+	server.logger.Debug(
+		ctx,
+		"sse stream open",
+		zap.String("conversation_id", snapshot.Run.ConversationID),
+		zap.String("run_id", runID),
+		zap.Int64("after", after),
+	)
 	responseWriter.Header().Set("Content-Type", "text/event-stream")
 	responseWriter.Header().Set("Cache-Control", "no-cache")
 	responseWriter.Header().Set("X-Accel-Buffering", "no")
@@ -51,7 +60,9 @@ func (server *Server) streamRunEvents(responseWriter http.ResponseWriter, reques
 	}
 	hints := notifications(subscription)
 
-	cursor, terminal, err := server.replayEvents(responseWriter, request, principal.UserID(), runID, after, flusher)
+	cursor, terminal, err := server.replayEvents(
+		responseWriter, request, principal.UserID(), snapshot.Run.ConversationID, runID, after, flusher,
+	)
 	if err != nil || terminal {
 		return
 	}
@@ -72,7 +83,9 @@ func (server *Server) streamRunEvents(responseWriter http.ResponseWriter, reques
 				continue
 			}
 		}
-		cursor, terminal, err = server.replayEvents(responseWriter, request, principal.UserID(), runID, cursor, flusher)
+		cursor, terminal, err = server.replayEvents(
+			responseWriter, request, principal.UserID(), snapshot.Run.ConversationID, runID, cursor, flusher,
+		)
 		if err != nil || terminal {
 			return
 		}
@@ -83,6 +96,7 @@ func (server *Server) replayEvents(
 	responseWriter http.ResponseWriter,
 	request *http.Request,
 	userID string,
+	conversationID string,
 	runID string,
 	after int64,
 	flusher http.Flusher,
@@ -92,6 +106,7 @@ func (server *Server) replayEvents(
 		server.logger.Error(
 			request.Context(),
 			"replay Run events failed",
+			zap.String("conversation_id", conversationID),
 			zap.String("run_id", runID),
 			zap.Error(err),
 		)
@@ -102,6 +117,15 @@ func (server *Server) replayEvents(
 		if err := writeSSEEvent(responseWriter, event); err != nil {
 			return cursor, false, err
 		}
+		server.logger.Debug(
+			request.Context(),
+			"sse event sent",
+			zap.String("conversation_id", conversationID),
+			zap.String("run_id", runID),
+			zap.Int64("seq", event.Seq),
+			zap.String("type", event.Type),
+			zap.String("payload_preview", logging.Preview(string(event.SafePayload), 0)),
+		)
 		cursor = event.Seq
 		flush(flusher)
 		if terminalEventType(event.Type) {

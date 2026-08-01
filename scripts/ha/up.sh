@@ -81,6 +81,37 @@ create_runtime_secret() {
   trap - EXIT HUP INT TERM
 }
 
+# apply_platform_config applies deploy/ha/config.yaml, overlaying LOG_LEVEL /
+# LOG_MAX_AGE_DAYS from .env when set so local toggles take effect on up.
+apply_platform_config() {
+  log_level=$(read_env LOG_LEVEL)
+  if [ -z "$log_level" ]; then
+    log_level=info
+  fi
+  case "$log_level" in
+    debug|info|warn|warning|error) ;;
+    *)
+      printf '%s\n' "LOG_LEVEL must be debug, info, warn, or error (got $log_level)." >&2
+      return 1
+      ;;
+  esac
+  log_max_age=$(read_env LOG_MAX_AGE_DAYS)
+  if [ -z "$log_max_age" ]; then
+    log_max_age=2
+  fi
+
+  config_file=$(mktemp "${TMPDIR:-/tmp}/agent-platform-ha-config.XXXXXX")
+  trap 'rm -f "$config_file"' EXIT HUP INT TERM
+  sed \
+    -e "s|^  LOG_LEVEL: .*|  LOG_LEVEL: ${log_level}|" \
+    -e "s|^  LOG_MAX_AGE_DAYS: .*|  LOG_MAX_AGE_DAYS: \"${log_max_age}\"|" \
+    "$REPOSITORY_ROOT/deploy/ha/config.yaml" > "$config_file"
+  kubectl --context "$HA_KUBE_CONTEXT" apply --filename "$config_file"
+  rm -f "$config_file"
+  trap - EXIT HUP INT TERM
+  printf '%s\n' "Applied HA ConfigMap with LOG_LEVEL=$log_level"
+}
+
 build_images() {
   build_proxy=$(read_env DOCKER_PROXY_URL)
   build_all_proxy=$(read_env DOCKER_ALL_PROXY_URL)
@@ -200,7 +231,7 @@ k3d image import --cluster "$HA_CLUSTER" \
   agent-platform-web:ha
 
 kubectl --context "$HA_KUBE_CONTEXT" apply --filename deploy/ha/namespace.yaml
-kubectl --context "$HA_KUBE_CONTEXT" apply --filename deploy/ha/config.yaml
+apply_platform_config
 create_runtime_secret
 kubectl --context "$HA_KUBE_CONTEXT" --namespace "$HA_NAMESPACE" \
   delete job database-migrate --ignore-not-found
@@ -222,9 +253,14 @@ kubectl --context "$HA_KUBE_CONTEXT" --namespace "$HA_NAMESPACE" \
 start_dashboard
 wait_for_url "Agent Platform" "http://127.0.0.1:5173/"
 
+log_level=$(read_env LOG_LEVEL)
+if [ -z "$log_level" ]; then
+  log_level=info
+fi
 printf '%s\n' \
   "Agent Platform HA lab is ready:" \
   "  Application:  http://127.0.0.1:5173" \
   "  HA Dashboard: http://$HA_DASHBOARD_ADDR" \
   "  Namespace:    $HA_NAMESPACE" \
+  "  LOG_LEVEL:    $log_level (from .env; edit LOG_LEVEL and rerun this script)" \
   "Run ./scripts/ha/down.sh when the experiment is complete."

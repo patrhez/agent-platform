@@ -11,6 +11,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"github.com/patrhez/agent-platform/backend/internal/logging"
 )
 
 func (runner *EinoRunner) runWithADK(
@@ -23,17 +24,20 @@ func (runner *EinoRunner) runWithADK(
 	emit func(RuntimeEvent) error,
 ) (Result, error) {
 	session := &adkEmitSession{
+		ctx:     ctx,
 		runID:   runID,
 		attempt: attempt,
 		state:   &state,
 		ordinal: &ordinal,
 		emit:    emit,
 		model:   runner.model,
+		logger:  runner.logger,
 	}
 	agent, err := runner.newADKAgent(ctx, session, toolset)
 	if err != nil {
 		return Result{}, err
 	}
+	session.logEinoInput(ctx, ordinal > 0)
 	adkRunner := adk.NewRunner(ctx, adk.RunnerConfig{
 		Agent:           agent,
 		EnableStreaming: true,
@@ -58,6 +62,7 @@ func (runner *EinoRunner) newADKAgent(
 	if err != nil {
 		return nil, err
 	}
+	session.logEinoToolsBound(ctx, runner.definition.Agent.ID, invokables)
 	handlers, err := buildContextHandlers(ctx, runner.definition, session)
 	if err != nil {
 		return nil, err
@@ -92,12 +97,14 @@ func (runner *EinoRunner) newADKAgent(
 // ordinal is shared with the resume preamble so Checkpoint ordinals stay monotonic.
 type adkEmitSession struct {
 	mu      sync.Mutex
+	ctx     context.Context
 	runID   string
 	attempt int
 	state   *checkpointState
 	ordinal *int
 	emit    func(RuntimeEvent) error
 	model   model.ToolCallingChatModel
+	logger  logging.Logger
 	final   string
 }
 
@@ -252,33 +259,39 @@ func (session *adkEmitSession) emitAssistantBoundary(message *schema.Message) er
 		return err
 	}
 	*session.ordinal++
+	var event RuntimeEvent
 	if len(message.ToolCalls) == 0 {
 		session.final = message.Content
-		return session.emit(RuntimeEvent{
+		event = RuntimeEvent{
 			StepNo:     session.state.Iteration,
 			Kind:       "model",
 			Summary:    "Agent produced its final troubleshooting report",
 			Final:      message.Content,
 			Checkpoint: checkpoint,
-		})
+		}
+	} else {
+		event = RuntimeEvent{
+			StepNo:     session.state.Iteration,
+			Kind:       "model",
+			Summary:    "Agent selected read-only repository Tools",
+			Checkpoint: checkpoint,
+		}
 	}
-	return session.emit(RuntimeEvent{
-		StepNo:     session.state.Iteration,
-		Kind:       "model",
-		Summary:    "Agent selected read-only repository Tools",
-		Checkpoint: checkpoint,
-	})
+	session.logEinoOutput(session.logContext(), event)
+	return session.emit(event)
 }
 
 func (session *adkEmitSession) emitToolStart(request ToolRequest) error {
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	return session.emit(RuntimeEvent{
+	event := RuntimeEvent{
 		StepNo:  session.state.Iteration,
 		Kind:    "tool",
 		Summary: "Agent started " + request.Name,
 		Tool:    &request,
-	})
+	}
+	session.logEinoOutput(session.logContext(), event)
+	return session.emit(event)
 }
 
 func (session *adkEmitSession) emitToolFinish(request ToolRequest, result ToolResult) error {
@@ -294,12 +307,21 @@ func (session *adkEmitSession) emitToolFinish(request ToolRequest, result ToolRe
 		return err
 	}
 	*session.ordinal++
-	return session.emit(RuntimeEvent{
+	event := RuntimeEvent{
 		StepNo:     session.state.Iteration,
 		Kind:       "tool",
 		Summary:    "Agent completed " + request.Name + ": " + result.Summary,
 		Tool:       &request,
 		ToolResult: &result,
 		Checkpoint: checkpoint,
-	})
+	}
+	session.logEinoOutput(session.logContext(), event)
+	return session.emit(event)
+}
+
+func (session *adkEmitSession) logContext() context.Context {
+	if session.ctx != nil {
+		return session.ctx
+	}
+	return context.Background()
 }

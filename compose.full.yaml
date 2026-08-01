@@ -53,6 +53,9 @@ services:
       LLM_MODEL: ${LLM_MODEL}
       WORKSPACE_MCP_URL: http://workspace-mcp:8081/mcp
       WORKER_ID: ${WORKER_ID}
+      LOG_DIR: ${LOG_DIR:-logs}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_MAX_AGE_DAYS: ${LOG_MAX_AGE_DAYS:-14}
     depends_on:
       migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
@@ -80,6 +83,9 @@ services:
       WORKER_ID: ${WORKER_ID}
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-10}
       AGENT_CONFIG_PATH: /etc/agent-platform/issue-troubleshooter.yaml
+      LOG_DIR: ${LOG_DIR:-logs}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_MAX_AGE_DAYS: ${LOG_MAX_AGE_DAYS:-14}
     depends_on:
       migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}

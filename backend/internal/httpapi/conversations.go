@@ -101,6 +101,16 @@ func (server *Server) createConversation(responseWriter http.ResponseWriter, req
 		writeStoreError(ctx, server.logger, responseWriter, err)
 		return
 	}
+	server.logger.Debug(
+		ctx,
+		"message accepted",
+		zap.String("conversation_id", conversation.ID),
+		zap.String("run_id", run.ID),
+		zap.String("message_id", run.TriggerMessageID),
+		zap.String("status", string(run.Status)),
+		zap.Int("content_len", utf8.RuneCountInString(content)),
+		zap.String("content_preview", logging.Preview(content, 0)),
+	)
 	writeJSON(ctx, server.logger, responseWriter, http.StatusAccepted, createConversationResponse{
 		Conversation: conversation, MessageID: run.TriggerMessageID, RunID: run.ID, Status: string(run.Status),
 	})
@@ -217,6 +227,17 @@ func (server *Server) createMessage(responseWriter http.ResponseWriter, request 
 		writeStoreError(ctx, server.logger, responseWriter, err)
 		return
 	}
+	server.logger.Debug(
+		ctx,
+		"message accepted",
+		zap.String("conversation_id", run.ConversationID),
+		zap.String("run_id", run.ID),
+		zap.String("message_id", run.TriggerMessageID),
+		zap.String("mode", string(mode)),
+		zap.String("status", string(run.Status)),
+		zap.Int("content_len", utf8.RuneCountInString(content)),
+		zap.String("content_preview", logging.Preview(content, 0)),
+	)
 	server.publishRunEvents(ctx, events)
 	writeJSON(ctx, server.logger, responseWriter, http.StatusAccepted, createMessageResponse{
 		MessageID: run.TriggerMessageID, RunID: run.ID, Status: string(run.Status),

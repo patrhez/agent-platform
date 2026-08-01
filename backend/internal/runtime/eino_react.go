@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/oklog/ulid/v2"
 	"github.com/patrhez/agent-platform/backend/internal/domain"
+	"github.com/patrhez/agent-platform/backend/internal/logging"
 )
 
 // EinoRunner executes one Agent Run through Eino ADK behind the AgentRunner boundary.
@@ -19,6 +20,7 @@ type EinoRunner struct {
 	definition Definition
 	model      model.ToolCallingChatModel
 	connect    executorFactory
+	logger     logging.Logger
 }
 
 type checkpointState struct {
@@ -27,7 +29,12 @@ type checkpointState struct {
 }
 
 // NewEinoRunner creates an Eino runtime for one release-bundled Agent definition.
-func NewEinoRunner(definition Definition, baseURL string, apiKey string) (*EinoRunner, error) {
+func NewEinoRunner(
+	definition Definition,
+	baseURL string,
+	apiKey string,
+	logger logging.Logger,
+) (*EinoRunner, error) {
 	if err := definition.Validate(); err != nil {
 		return nil, err
 	}
@@ -38,7 +45,15 @@ func NewEinoRunner(definition Definition, baseURL string, apiKey string) (*EinoR
 	if err != nil {
 		return nil, fmt.Errorf("create Eino OpenAI model: %w", err)
 	}
-	return &EinoRunner{definition: definition, model: chatModel, connect: newStreamableExecutor}, nil
+	if logger == nil {
+		logger = logging.Nop()
+	}
+	return &EinoRunner{
+		definition: definition,
+		model:      chatModel,
+		connect:    newStreamableExecutor(logger),
+		logger:     logger,
+	}, nil
 }
 
 func newToolCallingModel(
@@ -78,6 +93,7 @@ func (runner *EinoRunner) Run(
 	if err != nil {
 		return Result{}, err
 	}
+	runner.logToolsetReady(runContext, input.RunID, toolset)
 	state, ordinal, err := restoreState(input, checkpoint, runner.definition.SystemPrompt)
 	if err != nil {
 		return Result{}, closeToolsetOnError(toolset, err)
