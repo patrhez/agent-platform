@@ -107,6 +107,23 @@ describe("RunTrace", () => {
     expect(screen.queryByText(/Calling |Last tool:/)).toBeNull();
   });
 
+  it("settles transient rows from the terminal event before the Run snapshot refreshes", async () => {
+    vi.mocked(api.getTrace).mockResolvedValue({ steps: [], toolCalls: [] });
+    const events = [
+      event(1, "progress.updated", { summary: "Agent selected read-only repository Tools" }),
+      event(2, "assistant.started", { streamId: "run-1:1:1", attempt: 1, stepNo: 1 }),
+      event(3, "assistant.completed", { text: "Done" }),
+      event(4, "run.completed", { summary: "Run completed" }),
+    ];
+    render(<RunTrace run={run} events={events} />);
+
+    await screen.findByText("Answer generation complete");
+    expect(document.querySelectorAll(".timeline-item.running")).toHaveLength(0);
+    expect(screen.getByText("Agent selected read-only repository Tools").closest("li"))
+      .toHaveClass("completed");
+    expect(screen.getByText("Generating answer").closest("li")).toHaveClass("completed");
+  });
+
   it("merges persisted trace with live safe Tool progress", async () => {
     const started = event(1, "assistant.started", {
       streamId: "run-1:1:1", attempt: 1, stepNo: 1, reasoning: "private thought",

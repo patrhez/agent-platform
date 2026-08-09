@@ -26,8 +26,12 @@ export function RunTrace({ run, events }: { run: Run; events: RunEvent[] }) {
     return () => { active = false; };
   }, [run.id, toolEventEpoch]);
   const timeline = useMemo(
-    () => mergeTimeline(persistedTimeline(trace), liveTimeline(events)),
-    [trace, events],
+    () => settleTimeline(
+      run.status,
+      events,
+      mergeTimeline(persistedTimeline(trace), liveTimeline(events)),
+    ),
+    [trace, events, run.status],
   );
   const liveActive = run.status === "queued" || run.status === "running" || run.status === "waiting";
   const summary = traceSummary(run, timeline);
@@ -188,6 +192,26 @@ function mergeTimeline(persisted: TimelineItem[], live: TimelineItem[]): Timelin
     merged.set(item.key, { ...merged.get(item.key), ...item });
   }
   return [...merged.values()].sort((left, right) => left.order - right.order);
+}
+
+function settleTimeline(
+  runStatus: string,
+  events: RunEvent[],
+  timeline: TimelineItem[],
+): TimelineItem[] {
+  const terminalEvent = [...events].reverse().find((event) =>
+    event.type === "run.completed" || event.type === "run.failed" || event.type === "run.cancelled"
+  );
+  const effectiveStatus = terminalEvent?.type.replace("run.", "") ?? runStatus;
+  if (effectiveStatus === "queued" || effectiveStatus === "running" || effectiveStatus === "waiting") {
+    return timeline;
+  }
+  const settledStatus = effectiveStatus === "failed"
+    ? "failed"
+    : effectiveStatus === "cancelled"
+      ? "cancelled"
+      : "completed";
+  return timeline.map((item) => item.status === "running" ? { ...item, status: settledStatus } : item);
 }
 
 function SafeArguments({ toolName, value }: { toolName: string; value: unknown }) {
