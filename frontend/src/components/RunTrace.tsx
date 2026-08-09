@@ -199,19 +199,27 @@ function settleTimeline(
   events: RunEvent[],
   timeline: TimelineItem[],
 ): TimelineItem[] {
+  const phaseSettled = settleSupersededItems(timeline);
   const terminalEvent = [...events].reverse().find((event) =>
     event.type === "run.completed" || event.type === "run.failed" || event.type === "run.cancelled"
   );
   const effectiveStatus = terminalEvent?.type.replace("run.", "") ?? runStatus;
   if (effectiveStatus === "queued" || effectiveStatus === "running" || effectiveStatus === "waiting") {
-    return timeline;
+    return phaseSettled;
   }
   const settledStatus = effectiveStatus === "failed"
     ? "failed"
     : effectiveStatus === "cancelled"
       ? "cancelled"
       : "completed";
-  return timeline.map((item) => item.status === "running" ? { ...item, status: settledStatus } : item);
+  return phaseSettled.map((item) => item.status === "running" ? { ...item, status: settledStatus } : item);
+}
+
+function settleSupersededItems(timeline: TimelineItem[]): TimelineItem[] {
+  return timeline.map((item, index) => {
+    if (item.status !== "running" || index === timeline.length - 1) return item;
+    return { ...item, status: "completed" };
+  });
 }
 
 function SafeArguments({ toolName, value }: { toolName: string; value: unknown }) {

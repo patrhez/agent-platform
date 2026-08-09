@@ -9,6 +9,7 @@ import { Timestamp } from "./Timestamp";
 
 const followUpModeKey = "agent-platform.followUpMode";
 const STICK_THRESHOLD_PX = 80;
+const COPY_FEEDBACK_MS = 1600;
 
 function isStuckToBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_THRESHOLD_PX;
@@ -125,14 +126,7 @@ export function Chat({
           </article>
           {turn.run && <RunTrace run={turn.run} events={eventsByRunID[turn.run.id] ?? []} />}
           {turn.run && <RunStatus run={turn.run} />}
-          {turn.assistants.map((message) => <article
-            className={message.status === "cancelled" ? "assistant cancelled" : "assistant"}
-            key={message.id}
-          >
-            <b>Agent{message.status === "cancelled" ? <span className="stopped-marker">Stopped</span> : null}</b>
-            <MarkdownContent content={message.content} />
-            <Timestamp value={message.createdAt} className="message-time" />
-          </article>)}
+          {turn.assistants.map((message) => <AssistantMessage key={message.id} message={message} />)}
           {showDraft && draft && <article
             className="assistant streaming"
             aria-label="Agent is answering"
@@ -205,6 +199,74 @@ export function Chat({
       </div>
     </form>
   </main>;
+}
+
+type CopyStatus = "idle" | "copied" | "failed";
+
+function AssistantMessage({ message }: { message: Message }) {
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
+  const resetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
+  }, []);
+
+  const copyMessage = async () => {
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard API is unavailable");
+      await navigator.clipboard.writeText(message.content);
+      showCopyStatus("copied");
+    } catch {
+      showCopyStatus("failed");
+    }
+  };
+
+  const showCopyStatus = (status: CopyStatus) => {
+    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
+    setCopyStatus(status);
+    resetTimerRef.current = window.setTimeout(() => {
+      setCopyStatus("idle");
+      resetTimerRef.current = null;
+    }, COPY_FEEDBACK_MS);
+  };
+
+  const copyLabel = copyStatus === "copied"
+    ? "Copied assistant message"
+    : copyStatus === "failed"
+      ? "Copy assistant message failed"
+      : "Copy assistant message";
+
+  return <article className={message.status === "cancelled" ? "assistant cancelled" : "assistant"}>
+    <b>Agent{message.status === "cancelled" ? <span className="stopped-marker">Stopped</span> : null}</b>
+    <MarkdownContent content={message.content} />
+    <footer className="message-actions">
+      <Timestamp value={message.createdAt} className="message-time" />
+      <button
+        type="button"
+        className="message-copy"
+        aria-label={copyLabel}
+        title={copyLabel}
+        onClick={() => void copyMessage()}
+      >
+        <CopyIcon copied={copyStatus === "copied"} />
+        <span aria-live="polite">
+          {copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : ""}
+        </span>
+      </button>
+    </footer>
+  </article>;
+}
+
+function CopyIcon({ copied }: { copied: boolean }) {
+  if (copied) {
+    return <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m5 12 4 4L19 6" />
+    </svg>;
+  }
+  return <svg viewBox="0 0 24 24" aria-hidden="true">
+    <rect x="8" y="8" width="11" height="11" rx="2" />
+    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+  </svg>;
 }
 
 function DraftContent({ draft }: { draft: AssistantDraft }) {

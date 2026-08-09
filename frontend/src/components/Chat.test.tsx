@@ -61,6 +61,10 @@ describe("Chat", () => {
       removeItem: (key: string) => { store.delete(key); },
       clear: () => { store.clear(); },
     });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
     vi.mocked(api.getTrace).mockResolvedValue({ steps: [], toolCalls: [] });
   });
 
@@ -78,6 +82,29 @@ describe("Chat", () => {
       onSend={vi.fn()}
     />);
     expect(screen.queryByRole("article", { name: "Agent is answering" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Final answer" })).toBeTruthy();
+  });
+
+  it("copies the complete assistant Markdown and confirms success", async () => {
+    render(<Chat messages={[userMessage, assistantMessage]} runs={[run]} onSend={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy assistant message" }));
+
+    await vi.waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith("# Final answer");
+    });
+    expect(await screen.findByRole("button", { name: "Copied assistant message" })).toBeTruthy();
+    expect(screen.getByText("Copied")).toBeTruthy();
+  });
+
+  it("reports a clipboard failure without changing the message", async () => {
+    vi.mocked(navigator.clipboard.writeText).mockRejectedValueOnce(new Error("denied"));
+    render(<Chat messages={[userMessage, assistantMessage]} runs={[run]} onSend={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy assistant message" }));
+
+    expect(await screen.findByRole("button", { name: "Copy assistant message failed" })).toBeTruthy();
+    expect(screen.getByText("Copy failed")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Final answer" })).toBeTruthy();
   });
 

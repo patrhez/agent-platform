@@ -124,6 +124,44 @@ describe("RunTrace", () => {
     expect(screen.getByText("Generating answer").closest("li")).toHaveClass("completed");
   });
 
+  it("settles each model phase when the next phase arrives", async () => {
+    vi.mocked(api.getTrace).mockResolvedValue({ steps: [], toolCalls: [] });
+    const progress = event(1, "progress.updated", {
+      summary: "Agent selected read-only repository Tools",
+    });
+    const toolStarted = event(2, "tool.started", {
+      toolCallId: "tool-2", tool: "code.search", status: "running",
+      arguments: { repo: "agent-platform", query: "timeline" }, durationMs: 0,
+    });
+    const toolCompleted = event(3, "tool.completed", {
+      toolCallId: "tool-2", tool: "code.search", status: "completed",
+      arguments: { repo: "agent-platform", query: "timeline" }, durationMs: 20,
+    });
+    const assistantStarted = event(4, "assistant.started", {
+      streamId: "run-1:1:2", attempt: 1, stepNo: 2,
+    });
+    const assistantCompleted = event(5, "assistant.completed", { text: "Done" });
+    const { rerender } = render(<RunTrace run={run} events={[progress, toolStarted]} />);
+
+    expect(await screen.findByText("Agent selected read-only repository Tools").then((node) => node.closest("li")))
+      .toHaveClass("completed");
+    expect(screen.getByText("code.search").closest("li")).toHaveClass("running");
+
+    rerender(<RunTrace
+      run={run}
+      events={[progress, toolStarted, toolCompleted, assistantStarted]}
+    />);
+    expect(await screen.findByText("Generating answer").then((node) => node.closest("li")))
+      .toHaveClass("running");
+
+    rerender(<RunTrace
+      run={run}
+      events={[progress, toolStarted, toolCompleted, assistantStarted, assistantCompleted]}
+    />);
+    expect(await screen.findByText("Generating answer").then((node) => node.closest("li")))
+      .toHaveClass("completed");
+  });
+
   it("merges persisted trace with live safe Tool progress", async () => {
     const started = event(1, "assistant.started", {
       streamId: "run-1:1:1", attempt: 1, stepNo: 1, reasoning: "private thought",
