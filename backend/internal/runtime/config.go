@@ -31,9 +31,17 @@ type AgentDefinition struct {
 
 // ModelDefinition selects the LLM gateway interface and model settings.
 type ModelDefinition struct {
-	APIMode     string  `yaml:"api_mode"`
-	Model       string  `yaml:"model"`
-	Temperature float32 `yaml:"temperature"`
+	Provider          string  `yaml:"provider"`
+	APIMode           string  `yaml:"api_mode"`
+	Model             string  `yaml:"model"`
+	Temperature       float32 `yaml:"temperature"`
+	ReasoningReplay   string  `yaml:"reasoning_replay"`
+	ContinuationScope string  `yaml:"continuation_scope"`
+	AdapterVersion    string  `yaml:"adapter_version"`
+	// RequestFields are provider-specific Chat Completions request fields.
+	// They are passed through only by the OpenAI-compatible adapter, for
+	// example DeepSeek's "thinking": {"type": "enabled"}.
+	RequestFields map[string]any `yaml:"request_fields"`
 }
 
 // LimitDefinition bounds one Run's time and agent iterations.
@@ -162,6 +170,22 @@ func (definition Definition) Validate() error {
 	}
 	if !supportedAPIMode(agent.Model.APIMode) || agent.Model.Model == "" {
 		return fmt.Errorf("unsupported model API mode %q", agent.Model.APIMode)
+	}
+	if agent.Model.ReasoningReplay != "" &&
+		agent.Model.ReasoningReplay != "disabled" &&
+		agent.Model.ReasoningReplay != "required" {
+		return fmt.Errorf("unsupported reasoning_replay mode %q", agent.Model.ReasoningReplay)
+	}
+	if agent.Model.ContinuationScope != "" &&
+		agent.Model.ContinuationScope != "run" &&
+		agent.Model.ContinuationScope != "conversation" {
+		return fmt.Errorf("unsupported continuation_scope %q", agent.Model.ContinuationScope)
+	}
+	if agent.Model.ReasoningReplay == "required" && agent.Model.ContinuationScope == "" {
+		return fmt.Errorf("continuation_scope is required when reasoning_replay is required")
+	}
+	if agent.Model.ReasoningReplay == "required" && (agent.Model.Provider == "" || agent.Model.AdapterVersion == "") {
+		return fmt.Errorf("provider and adapter_version are required when reasoning_replay is required")
 	}
 	if agent.Limits.MaxSteps < 1 || agent.Limits.RunTimeoutSeconds < 1 {
 		return fmt.Errorf("invalid Agent execution limits")

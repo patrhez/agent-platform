@@ -8,6 +8,7 @@ import (
 	"github.com/cloudwego/eino/adk/middlewares/reduction"
 	"github.com/cloudwego/eino/adk/middlewares/summarization"
 	"github.com/cloudwego/eino/schema"
+	"go.uber.org/zap"
 )
 
 func buildContextHandlers(
@@ -76,6 +77,33 @@ func (handler *checkpointStateSync) BeforeModelRewriteState(
 	_ *adk.ModelContext,
 ) (context.Context, *adk.ChatModelAgentState, error) {
 	handler.session.replaceMessages(state.Messages)
+	return ctx, state, nil
+}
+
+func (session *adkEmitSession) captureProviderState(messages []*schema.Message) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	copied := make([]*schema.Message, len(messages))
+	copy(copied, messages)
+	session.state.Messages = copied
+	session.providerResponseCaptured = true
+	if session.logger != nil {
+		session.logger.Debug(session.logContext(), "captured provider model state",
+			zap.Bool("has_reasoning", hasReasoning(messages)),
+			zap.Int("message_count", len(messages)),
+		)
+	}
+}
+
+// AfterModelRewriteState observes the complete provider response before the
+// platform emits its safe event projection. This is the only point at which a
+// checkpoint can retain protocol-only fields such as reasoning_content.
+func (handler *checkpointStateSync) AfterModelRewriteState(
+	ctx context.Context,
+	state *adk.ChatModelAgentState,
+	_ *adk.ModelContext,
+) (context.Context, *adk.ChatModelAgentState, error) {
+	handler.session.captureProviderState(state.Messages)
 	return ctx, state, nil
 }
 

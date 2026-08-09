@@ -3,9 +3,20 @@ agent:
   version: 2026-07-19.2
   runtime: eino-react
   model:
+    provider: deepseek
     api_mode: chat_completions
     model: ${LLM_MODEL}
     temperature: 0.1
+    # Required for providers, such as DeepSeek V4 thinking mode, that require
+    # the preceding assistant reasoning to accompany a tool-result continuation.
+    reasoning_replay: required
+    continuation_scope: run
+    adapter_version: deepseek-chat-completions/v1
+    # DeepSeek V4 returns replayable reasoning only when thinking mode is enabled.
+    # Passed unchanged by the OpenAI-compatible Chat Completions adapter.
+    request_fields:
+      thinking:
+        type: enabled
   limits:
     max_steps: 50
     run_timeout_seconds: 600

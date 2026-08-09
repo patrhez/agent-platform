@@ -46,7 +46,7 @@ func run(ctx context.Context) error {
 		logger.Error(ctx, "load configuration failed", zap.Error(err))
 		return err
 	}
-	database, err := database.Open(ctx, configuration.MySQLDSN)
+	database, err := database.Open(ctx, configuration.APIMySQLDSN)
 	if err != nil {
 		logger.Error(ctx, "open database failed", zap.Error(err))
 		return err

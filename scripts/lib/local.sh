@@ -120,6 +120,9 @@ load_local_configuration() {
   LLM_BASE_URL=$(read_env LLM_BASE_URL)
   LLM_API_KEY=$(read_env LLM_API_KEY)
   LLM_MODEL=$(read_env LLM_MODEL)
+  REPLAY_ENCRYPTION_KEY=$(read_env REPLAY_ENCRYPTION_KEY)
+  REPLAY_ENCRYPTION_ACTIVE_KEY_ID=$(read_env REPLAY_ENCRYPTION_ACTIVE_KEY_ID)
+  REPLAY_ENCRYPTION_KEYS=$(read_env REPLAY_ENCRYPTION_KEYS)
   WORKSPACE_MCP_URL=$(read_env WORKSPACE_MCP_URL)
   WORKER_ID=$(read_env WORKER_ID)
   HTTPS_PROXY=$(read_env HTTPS_PROXY)
@@ -130,7 +133,9 @@ load_local_configuration() {
   append_no_proxy 127.0.0.1
   append_no_proxy localhost
   no_proxy=$NO_PROXY
-  export REPOS_DIR MYSQL_DSN REDIS_URL LLM_BASE_URL LLM_API_KEY LLM_MODEL WORKSPACE_MCP_URL WORKER_ID
+  export REPOS_DIR MYSQL_DSN REDIS_URL LLM_BASE_URL LLM_API_KEY LLM_MODEL
+  export REPLAY_ENCRYPTION_KEY REPLAY_ENCRYPTION_ACTIVE_KEY_ID REPLAY_ENCRYPTION_KEYS
+  export WORKSPACE_MCP_URL WORKER_ID
   export HTTPS_PROXY HTTP_PROXY ALL_PROXY NO_PROXY no_proxy
   for key in REPOS_DIR MYSQL_DSN REDIS_URL LLM_BASE_URL LLM_API_KEY LLM_MODEL WORKSPACE_MCP_URL WORKER_ID; do
     value=$(printenv "$key")
@@ -139,6 +144,11 @@ load_local_configuration() {
       return 1
     fi
   done
+  if [ -z "$REPLAY_ENCRYPTION_KEY" ] &&
+    { [ -z "$REPLAY_ENCRYPTION_ACTIVE_KEY_ID" ] || [ -z "$REPLAY_ENCRYPTION_KEYS" ]; }; then
+    printf '%s\n' 'Configure REPLAY_ENCRYPTION_KEY or both keyring variables.' >&2
+    return 1
+  fi
   if [ ! -d "$REPOS_DIR" ]; then
     printf '%s\n' "REPOS_DIR is not a directory: $REPOS_DIR" >&2
     return 1

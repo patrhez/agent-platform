@@ -12,13 +12,16 @@ import (
 func (runner *EinoRunner) resumePendingToolCalls(
 	ctx context.Context,
 	runID string,
+	conversationID string,
 	state *checkpointState,
 	ordinal int,
 	toolset *mcpToolset,
 	emit func(RuntimeEvent) error,
 ) (int, error) {
 	for hasPendingToolCalls(state.Messages) {
-		nextOrdinal, err := runner.executePendingToolCalls(ctx, runID, state, ordinal, toolset, emit)
+		nextOrdinal, err := runner.executePendingToolCalls(
+			ctx, runID, conversationID, state, ordinal, toolset, emit,
+		)
 		if err != nil {
 			return ordinal, err
 		}
@@ -30,6 +33,7 @@ func (runner *EinoRunner) resumePendingToolCalls(
 func (runner *EinoRunner) executePendingToolCalls(
 	ctx context.Context,
 	runID string,
+	conversationID string,
 	state *checkpointState,
 	ordinal int,
 	toolset *mcpToolset,
@@ -59,7 +63,7 @@ func (runner *EinoRunner) executePendingToolCalls(
 			request.ToolMessageCallID(),
 			schema.WithToolName(call.Function.Name),
 		))
-		checkpoint, err := newCheckpoint(runID, ordinal+1, *state)
+		checkpoint, err := runner.newCheckpoint(runID, conversationID, ordinal+1, *state)
 		if err != nil {
 			return ordinal, err
 		}

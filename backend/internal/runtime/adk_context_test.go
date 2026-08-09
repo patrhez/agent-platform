@@ -3,6 +3,9 @@ package runtime
 import (
 	"context"
 	"testing"
+
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/schema"
 )
 
 func TestBuildContextHandlersRespectsEnabledFlags(t *testing.T) {
@@ -42,5 +45,25 @@ func TestBuildContextHandlersRespectsEnabledFlags(t *testing.T) {
 	}
 	if len(enabled) != 3 {
 		t.Fatalf("enabled handlers = %d, want reduction+summarization+sync", len(enabled))
+	}
+}
+
+func TestCheckpointStateSyncCapturesRawProviderResponse(t *testing.T) {
+	t.Parallel()
+	session := &adkEmitSession{state: &checkpointState{}}
+	handler := &checkpointStateSync{session: session}
+	message := schema.AssistantMessage("", nil)
+	message.ReasoningContent = "provider-only reasoning"
+	_, _, err := handler.AfterModelRewriteState(context.Background(), &adk.ChatModelAgentState{
+		Messages: []*schema.Message{message},
+	}, nil)
+	if err != nil {
+		t.Fatalf("AfterModelRewriteState() error = %v", err)
+	}
+	if !session.providerResponseCaptured {
+		t.Fatal("providerResponseCaptured = false, want true")
+	}
+	if got := session.state.Messages[0].ReasoningContent; got != "provider-only reasoning" {
+		t.Fatalf("captured ReasoningContent = %q", got)
 	}
 }

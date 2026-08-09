@@ -29,9 +29,36 @@ func TestClassifyRunFailure(t *testing.T) {
 			message: "The agent reached its maximum step limit before finishing.",
 		},
 		{
-			name:  "temperature",
-			cause: errors.New(`error, status code: 400, status: 400 Bad Request, message: invalid temperature: only 1 is allowed for this model`),
-			code:  "llm_invalid_temperature",
+			name:    "provider replay missing",
+			cause:   fmt.Errorf("restore: %w", ErrProviderReplayMissing),
+			code:    "provider_replay_missing",
+			message: "Required provider continuation state is unavailable.",
+		},
+		{
+			name:    "provider replay key unavailable",
+			cause:   ErrProviderReplayKeyUnavailable,
+			code:    "provider_replay_key_unavailable",
+			message: "Provider continuation encryption configuration is unavailable.",
+		},
+		{
+			name:    "provider replay decrypt failed",
+			cause:   ErrProviderReplayDecryptFailed,
+			code:    "provider_replay_decrypt_failed",
+			message: "Provider continuation state failed integrity validation.",
+		},
+		{
+			name:    "provider replay incompatible",
+			cause:   ErrProviderReplayIncompatible,
+			code:    "provider_replay_incompatible",
+			message: "Provider continuation state is incompatible with this run.",
+		},
+		{
+			name:    "temperature",
+			cause: errors.New(
+				`error, status code: 400, status: 400 Bad Request, message: ` +
+					`invalid temperature: only 1 is allowed for this model`,
+			),
+			code:    "llm_invalid_temperature",
 			message: "The language model rejected the temperature setting. Check the agent model configuration and retry.",
 		},
 		{
@@ -60,7 +87,10 @@ func TestClassifyRunFailure(t *testing.T) {
 		},
 		{
 			name:    "wrapped responses 400",
-			cause:   fmt.Errorf("call model: %w", errors.New("Responses API returned 400 Bad Request: {\"error\":{\"message\":\"bad schema\"}}")),
+			cause: fmt.Errorf(
+				"call model: %w",
+				errors.New("Responses API returned 400 Bad Request: bad schema"),
+			),
 			code:    "llm_invalid_request",
 			message: "The language model rejected the request. Check the agent model configuration and retry.",
 		},

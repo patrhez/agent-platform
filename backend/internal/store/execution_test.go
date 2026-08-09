@@ -100,6 +100,8 @@ func TestLoadRunExecutionReturnsFinalConversationHistoryThroughTrigger(t *testin
 			AddRow("message-1", "conversation-1", int64(1), "user", "Find the bugs.", "final").
 			AddRow("message-2", "conversation-1", int64(2), "assistant", "I found two bugs.", "final").
 			AddRow("message-3", "conversation-1", int64(3), "user", "Explain those bugs.", "final"))
+	mock.ExpectQuery("SELECT .*FROM `conversation_provider_continuations`.*LIMIT").
+		WillReturnError(gorm.ErrRecordNotFound)
 
 	execution, err := New(database).LoadRunExecution(context.Background(), "run-2", 4)
 	if err != nil {

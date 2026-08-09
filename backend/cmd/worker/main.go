@@ -42,7 +42,7 @@ func run(ctx context.Context) error {
 		logger.Error(ctx, "load configuration failed", zap.Error(err))
 		return err
 	}
-	db, err := database.Open(ctx, configuration.MySQLDSN)
+	db, err := database.Open(ctx, configuration.WorkerMySQLDSN)
 	if err != nil {
 		logger.Error(ctx, "open database failed", zap.Error(err))
 		return err
@@ -52,7 +52,17 @@ func run(ctx context.Context) error {
 		logger.Error(ctx, "load Agent definition failed", zap.Error(err))
 		return err
 	}
-	runner, err := runtime.NewEinoRunner(definition, configuration.LLMBaseURL, configuration.LLMAPIKey, logger)
+	runner, err := runtime.NewEinoRunner(
+		definition,
+		configuration.LLMBaseURL,
+		configuration.LLMAPIKey,
+		runtime.ReplayKeyringConfig{
+			ActiveKeyID: configuration.ReplayActiveKeyID,
+			KeysJSON:    configuration.ReplayEncryptionKeys,
+			LegacyKey:   configuration.ReplayEncryptionKey,
+		},
+		logger,
+	)
 	if err != nil {
 		logger.Error(ctx, "create Eino runner failed", zap.Error(err))
 		return err

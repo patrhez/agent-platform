@@ -23,7 +23,7 @@ func main() {
 
 	migrationContext, cancel := context.WithTimeout(context.Background(), migrationTimeout)
 	defer cancel()
-	databaseConnection, err := database.Open(migrationContext, configuration.MySQLDSN)
+	databaseConnection, err := database.Open(migrationContext, configuration.MigrationMySQLDSN)
 	if err != nil {
 		log.Printf("open migration database: %v", err)
 		os.Exit(1)

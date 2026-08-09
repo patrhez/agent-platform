@@ -302,13 +302,14 @@ func (worker *Worker) Execute(ctx context.Context, run domain.Run) error {
 		return err
 	}
 	agentInput := runtime.AgentInput{
-		RunID: run.ID, Attempt: run.Attempt, Messages: runtimeMessages(execution.Messages),
+		RunID: run.ID, ConversationID: run.ConversationID, Attempt: run.Attempt,
+		Messages: runtimeMessages(execution.Messages), ProviderReplay: execution.ProviderReplay,
 	}
 	writeRuntimeInputLog(ctx, worker.logger, run, agentInput, checkpoint != nil)
 	runContext, stopRenewal, leaseLost := worker.renewLease(ctx, run)
 	emit, finish := worker.persistEmitter(runContext, run)
 	result, runError := worker.runner.Run(runContext, agentInput, checkpoint, emit)
-	partial, flushError := finish()
+	partial, terminalBoundary, flushError := finish()
 	if runError == nil && flushError != nil {
 		runError = flushError
 	}
@@ -325,7 +326,7 @@ func (worker *Worker) Execute(ctx context.Context, run domain.Run) error {
 		writeRunFailureLog(ctx, worker.logger, run, status, time.Since(startedAt), runError)
 		return completionError
 	}
-	completionError := worker.completeSuccess(ctx, run, result)
+	completionError := worker.completeSuccess(ctx, run, result, terminalBoundary)
 	if completionError == nil {
 		worker.logger.Info(
 			ctx,
@@ -377,8 +378,9 @@ func (worker *Worker) renewLease(
 func (worker *Worker) persistEmitter(
 	ctx context.Context,
 	run domain.Run,
-) (func(runtime.RuntimeEvent) error, func() (string, error)) {
+) (func(runtime.RuntimeEvent) error, func() (string, *domain.ExecutionBoundary, error)) {
 	toolStartedAt := make(map[string]time.Time)
+	var terminalBoundary *domain.ExecutionBoundary
 	buffer := newStreamBuffer(func(values []domain.RunEvent) error {
 		persisted, err := worker.store.AppendRunEvents(ctx, run.ID, run.ExecutionToken, values)
 		if err != nil {
@@ -418,6 +420,10 @@ func (worker *Worker) persistEmitter(
 			return err
 		}
 		boundary := boundaryFromRuntimeEvent(run, event, payload, startedAt, now)
+		if event.Final != "" {
+			terminalBoundary = &boundary
+			return nil
+		}
 		persisted, err := worker.store.PersistBoundary(ctx, boundary)
 		if err != nil {
 			return err
@@ -428,9 +434,9 @@ func (worker *Worker) persistEmitter(
 		worker.publish(ctx, persisted)
 		return nil
 	}
-	finish := func() (string, error) {
+	finish := func() (string, *domain.ExecutionBoundary, error) {
 		err := buffer.Flush()
-		return buffer.CurrentText(), err
+		return buffer.CurrentText(), terminalBoundary, err
 	}
 	return emit, finish
 }
@@ -513,17 +519,26 @@ func runtimeEventType(event runtime.RuntimeEvent) string {
 	return "progress.updated"
 }
 
-func (worker *Worker) completeSuccess(ctx context.Context, run domain.Run, result runtime.Result) error {
+func (worker *Worker) completeSuccess(
+	ctx context.Context,
+	run domain.Run,
+	result runtime.Result,
+	terminalBoundary *domain.ExecutionBoundary,
+) error {
+	if terminalBoundary == nil {
+		return fmt.Errorf("successful Run %s has no terminal provider boundary", run.ID)
+	}
 	event, err := terminalEvent("run.completed", "Agent completed the troubleshooting report")
 	if err != nil {
 		return err
 	}
 	completion := domain.RunCompletion{
-		RunID:          run.ID,
-		ExecutionToken: run.ExecutionToken,
-		Status:         domain.RunStatusSucceeded,
-		AssistantText:  result.Final,
-		Event:          event,
+		RunID:            run.ID,
+		ExecutionToken:   run.ExecutionToken,
+		Status:           domain.RunStatusSucceeded,
+		AssistantText:    result.Final,
+		Event:            event,
+		TerminalBoundary: terminalBoundary,
 	}
 	persisted, err := worker.store.CompleteRun(ctx, completion)
 	if err != nil {

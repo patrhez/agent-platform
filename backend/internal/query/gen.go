@@ -16,25 +16,29 @@ import (
 )
 
 var (
-	Q             = new(Query)
-	Artifact      *artifact
-	Conversation  *conversation
-	Message       *message
-	Run           *run
-	RunCheckpoint *runCheckpoint
-	RunEvent      *runEvent
-	RunStep       *runStep
-	ToolCall      *toolCall
-	User          *user
+	Q                                = new(Query)
+	Artifact                         *artifact
+	Conversation                     *conversation
+	ConversationProviderContinuation *conversationProviderContinuation
+	Message                          *message
+	Run                              *run
+	RunCheckpoint                    *runCheckpoint
+	RunCheckpointReplay              *runCheckpointReplay
+	RunEvent                         *runEvent
+	RunStep                          *runStep
+	ToolCall                         *toolCall
+	User                             *user
 )
 
 func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	*Q = *Use(db, opts...)
 	Artifact = &Q.Artifact
 	Conversation = &Q.Conversation
+	ConversationProviderContinuation = &Q.ConversationProviderContinuation
 	Message = &Q.Message
 	Run = &Q.Run
 	RunCheckpoint = &Q.RunCheckpoint
+	RunCheckpointReplay = &Q.RunCheckpointReplay
 	RunEvent = &Q.RunEvent
 	RunStep = &Q.RunStep
 	ToolCall = &Q.ToolCall
@@ -43,31 +47,35 @@ func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 
 func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 	return &Query{
-		db:            db,
-		Artifact:      newArtifact(db, opts...),
-		Conversation:  newConversation(db, opts...),
-		Message:       newMessage(db, opts...),
-		Run:           newRun(db, opts...),
-		RunCheckpoint: newRunCheckpoint(db, opts...),
-		RunEvent:      newRunEvent(db, opts...),
-		RunStep:       newRunStep(db, opts...),
-		ToolCall:      newToolCall(db, opts...),
-		User:          newUser(db, opts...),
+		db:                               db,
+		Artifact:                         newArtifact(db, opts...),
+		Conversation:                     newConversation(db, opts...),
+		ConversationProviderContinuation: newConversationProviderContinuation(db, opts...),
+		Message:                          newMessage(db, opts...),
+		Run:                              newRun(db, opts...),
+		RunCheckpoint:                    newRunCheckpoint(db, opts...),
+		RunCheckpointReplay:              newRunCheckpointReplay(db, opts...),
+		RunEvent:                         newRunEvent(db, opts...),
+		RunStep:                          newRunStep(db, opts...),
+		ToolCall:                         newToolCall(db, opts...),
+		User:                             newUser(db, opts...),
 	}
 }
 
 type Query struct {
 	db *gorm.DB
 
-	Artifact      artifact
-	Conversation  conversation
-	Message       message
-	Run           run
-	RunCheckpoint runCheckpoint
-	RunEvent      runEvent
-	RunStep       runStep
-	ToolCall      toolCall
-	User          user
+	Artifact                         artifact
+	Conversation                     conversation
+	ConversationProviderContinuation conversationProviderContinuation
+	Message                          message
+	Run                              run
+	RunCheckpoint                    runCheckpoint
+	RunCheckpointReplay              runCheckpointReplay
+	RunEvent                         runEvent
+	RunStep                          runStep
+	ToolCall                         toolCall
+	User                             user
 }
 
 func (q *Query) Available() bool { return q.db != nil }
@@ -76,16 +84,18 @@ func (q *Query) UnderlyingDB() *gorm.DB { return q.db }
 
 func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
-		db:            db,
-		Artifact:      q.Artifact.clone(db),
-		Conversation:  q.Conversation.clone(db),
-		Message:       q.Message.clone(db),
-		Run:           q.Run.clone(db),
-		RunCheckpoint: q.RunCheckpoint.clone(db),
-		RunEvent:      q.RunEvent.clone(db),
-		RunStep:       q.RunStep.clone(db),
-		ToolCall:      q.ToolCall.clone(db),
-		User:          q.User.clone(db),
+		db:                               db,
+		Artifact:                         q.Artifact.clone(db),
+		Conversation:                     q.Conversation.clone(db),
+		ConversationProviderContinuation: q.ConversationProviderContinuation.clone(db),
+		Message:                          q.Message.clone(db),
+		Run:                              q.Run.clone(db),
+		RunCheckpoint:                    q.RunCheckpoint.clone(db),
+		RunCheckpointReplay:              q.RunCheckpointReplay.clone(db),
+		RunEvent:                         q.RunEvent.clone(db),
+		RunStep:                          q.RunStep.clone(db),
+		ToolCall:                         q.ToolCall.clone(db),
+		User:                             q.User.clone(db),
 	}
 }
 
@@ -99,42 +109,48 @@ func (q *Query) WriteDB() *Query {
 
 func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 	return &Query{
-		db:            db,
-		Artifact:      q.Artifact.replaceDB(db),
-		Conversation:  q.Conversation.replaceDB(db),
-		Message:       q.Message.replaceDB(db),
-		Run:           q.Run.replaceDB(db),
-		RunCheckpoint: q.RunCheckpoint.replaceDB(db),
-		RunEvent:      q.RunEvent.replaceDB(db),
-		RunStep:       q.RunStep.replaceDB(db),
-		ToolCall:      q.ToolCall.replaceDB(db),
-		User:          q.User.replaceDB(db),
+		db:                               db,
+		Artifact:                         q.Artifact.replaceDB(db),
+		Conversation:                     q.Conversation.replaceDB(db),
+		ConversationProviderContinuation: q.ConversationProviderContinuation.replaceDB(db),
+		Message:                          q.Message.replaceDB(db),
+		Run:                              q.Run.replaceDB(db),
+		RunCheckpoint:                    q.RunCheckpoint.replaceDB(db),
+		RunCheckpointReplay:              q.RunCheckpointReplay.replaceDB(db),
+		RunEvent:                         q.RunEvent.replaceDB(db),
+		RunStep:                          q.RunStep.replaceDB(db),
+		ToolCall:                         q.ToolCall.replaceDB(db),
+		User:                             q.User.replaceDB(db),
 	}
 }
 
 type queryCtx struct {
-	Artifact      IArtifactDo
-	Conversation  IConversationDo
-	Message       IMessageDo
-	Run           IRunDo
-	RunCheckpoint IRunCheckpointDo
-	RunEvent      IRunEventDo
-	RunStep       IRunStepDo
-	ToolCall      IToolCallDo
-	User          IUserDo
+	Artifact                         IArtifactDo
+	Conversation                     IConversationDo
+	ConversationProviderContinuation IConversationProviderContinuationDo
+	Message                          IMessageDo
+	Run                              IRunDo
+	RunCheckpoint                    IRunCheckpointDo
+	RunCheckpointReplay              IRunCheckpointReplayDo
+	RunEvent                         IRunEventDo
+	RunStep                          IRunStepDo
+	ToolCall                         IToolCallDo
+	User                             IUserDo
 }
 
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
-		Artifact:      q.Artifact.WithContext(ctx),
-		Conversation:  q.Conversation.WithContext(ctx),
-		Message:       q.Message.WithContext(ctx),
-		Run:           q.Run.WithContext(ctx),
-		RunCheckpoint: q.RunCheckpoint.WithContext(ctx),
-		RunEvent:      q.RunEvent.WithContext(ctx),
-		RunStep:       q.RunStep.WithContext(ctx),
-		ToolCall:      q.ToolCall.WithContext(ctx),
-		User:          q.User.WithContext(ctx),
+		Artifact:                         q.Artifact.WithContext(ctx),
+		Conversation:                     q.Conversation.WithContext(ctx),
+		ConversationProviderContinuation: q.ConversationProviderContinuation.WithContext(ctx),
+		Message:                          q.Message.WithContext(ctx),
+		Run:                              q.Run.WithContext(ctx),
+		RunCheckpoint:                    q.RunCheckpoint.WithContext(ctx),
+		RunCheckpointReplay:              q.RunCheckpointReplay.WithContext(ctx),
+		RunEvent:                         q.RunEvent.WithContext(ctx),
+		RunStep:                          q.RunStep.WithContext(ctx),
+		ToolCall:                         q.ToolCall.WithContext(ctx),
+		User:                             q.User.WithContext(ctx),
 	}
 }
 

@@ -28,11 +28,12 @@ type ResponsesModel struct {
 }
 
 type responsesRequest struct {
-	Model             string          `json:"model"`
-	Input             []responseInput `json:"input"`
-	Tools             []responseTool  `json:"tools,omitempty"`
-	Temperature       float32         `json:"temperature"`
-	ParallelToolCalls bool            `json:"parallel_tool_calls"`
+	Model             string            `json:"model"`
+	Input             []json.RawMessage `json:"input"`
+	Tools             []responseTool    `json:"tools,omitempty"`
+	Temperature       float32           `json:"temperature"`
+	ParallelToolCalls bool              `json:"parallel_tool_calls"`
+	Store             bool              `json:"store"`
 }
 
 type responseInput struct {
@@ -53,7 +54,7 @@ type responseTool struct {
 }
 
 type responsesResponse struct {
-	Output []responseOutput `json:"output"`
+	Output []json.RawMessage `json:"output"`
 }
 
 type responseOutput struct {
@@ -185,41 +186,194 @@ func (responsesModel *ResponsesModel) newRequest(
 		Tools:             convertedTools,
 		Temperature:       temperature,
 		ParallelToolCalls: false,
+		Store:             false,
 	}, nil
 }
 
-func convertMessages(messages []*schema.Message) ([]responseInput, error) {
-	converted := make([]responseInput, 0, len(messages))
+func convertMessages(messages []*schema.Message) ([]json.RawMessage, error) {
+	converted := make([]json.RawMessage, 0, len(messages))
+	var err error
 	for _, message := range messages {
 		switch message.Role {
 		case schema.System, schema.User:
-			converted = append(converted, responseInput{
+			item := responseInput{
 				Role:    string(message.Role),
 				Content: []map[string]string{{"type": "input_text", "text": message.Content}},
-			})
+			}
+			converted, err = appendResponseInput(converted, item)
+			if err != nil {
+				return nil, err
+			}
 		case schema.Assistant:
+			nativeItems, err := responseOutputItems(message.Extra)
+			if err != nil {
+				return nil, err
+			}
+			if len(nativeItems) > 0 {
+				converted = append(converted, nativeItems...)
+				continue
+			}
 			for _, call := range message.ToolCalls {
-				converted = append(converted, responseInput{
+				converted, err = appendResponseInput(converted, responseInput{
 					Type:      "function_call",
 					CallID:    call.ID,
 					Name:      call.Function.Name,
 					Arguments: call.Function.Arguments,
 				})
+				if err != nil {
+					return nil, err
+				}
 			}
 			if message.Content != "" {
-				converted = append(converted, responseInput{Role: "assistant", Content: message.Content})
+				converted, err = appendResponseInput(
+					converted, responseInput{Role: "assistant", Content: message.Content},
+				)
+				if err != nil {
+					return nil, err
+				}
 			}
 		case schema.Tool:
-			converted = append(converted, responseInput{
+			converted, err = appendResponseInput(converted, responseInput{
 				Type:   "function_call_output",
 				CallID: message.ToolCallID,
 				Output: message.Content,
 			})
+			if err != nil {
+				return nil, err
+			}
 		default:
 			return nil, fmt.Errorf("unsupported Responses message role %q", message.Role)
 		}
 	}
 	return converted, nil
+}
+
+func appendResponseInput(
+	values []json.RawMessage,
+	input responseInput,
+) ([]json.RawMessage, error) {
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("encode Responses input item: %w", err)
+	}
+	return append(values, encoded), nil
+}
+
+func responseOutputItems(extra map[string]any) ([]json.RawMessage, error) {
+	if len(extra) == 0 || extra["openai_responses_output"] == nil {
+		return nil, nil
+	}
+	switch values := extra["openai_responses_output"].(type) {
+	case []json.RawMessage:
+		return values, nil
+	case []any:
+		items := make([]json.RawMessage, 0, len(values))
+		for _, value := range values {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return nil, fmt.Errorf("encode restored Responses output item: %w", err)
+			}
+			items = append(items, encoded)
+		}
+		return items, nil
+	default:
+		return nil, fmt.Errorf("invalid restored Responses output item representation")
+	}
+}
+
+type responseReplayHeader struct {
+	Type string `json:"type"`
+	Role string `json:"role"`
+}
+
+func restoreResponsesReplayItems(items []json.RawMessage) ([]*schema.Message, error) {
+	messages := make([]*schema.Message, 0, len(items))
+	pending := schema.AssistantMessage("", nil)
+	pendingItems := make([]json.RawMessage, 0)
+	flushAssistant := func() {
+		if pending.Content == "" && len(pending.ToolCalls) == 0 && len(pendingItems) == 0 {
+			return
+		}
+		pending.Extra = map[string]any{
+			"openai_responses_output": append([]json.RawMessage(nil), pendingItems...),
+		}
+		messages = append(messages, pending)
+		pending = schema.AssistantMessage("", nil)
+		pendingItems = pendingItems[:0]
+	}
+	for _, item := range items {
+		header := responseReplayHeader{}
+		if err := json.Unmarshal(item, &header); err != nil {
+			return nil, fmt.Errorf("decode Responses replay item header: %w", err)
+		}
+		switch {
+		case header.Role == "system" || header.Role == "user":
+			flushAssistant()
+			content, err := responseReplayContent(item)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, &schema.Message{Role: schema.RoleType(header.Role), Content: content})
+		case header.Type == "function_call":
+			output := responseOutput{}
+			if err := json.Unmarshal(item, &output); err != nil {
+				return nil, fmt.Errorf("decode Responses function-call replay item: %w", err)
+			}
+			pending.ToolCalls = append(pending.ToolCalls, schema.ToolCall{
+				ID: output.CallID, Type: "function",
+				Function: schema.FunctionCall{Name: output.Name, Arguments: output.Arguments},
+			})
+			pendingItems = append(pendingItems, append(json.RawMessage(nil), item...))
+		case header.Type == "message":
+			output := responseOutput{}
+			if err := json.Unmarshal(item, &output); err != nil {
+				return nil, fmt.Errorf("decode Responses message replay item: %w", err)
+			}
+			for _, content := range output.Content {
+				if content.Type == "output_text" {
+					pending.Content += content.Text
+				}
+			}
+			pendingItems = append(pendingItems, append(json.RawMessage(nil), item...))
+			flushAssistant()
+		case header.Type == "function_call_output":
+			flushAssistant()
+			input := responseInput{}
+			if err := json.Unmarshal(item, &input); err != nil {
+				return nil, fmt.Errorf("decode Responses tool-result replay item: %w", err)
+			}
+			messages = append(messages, schema.ToolMessage(input.Output, input.CallID))
+		default:
+			pendingItems = append(pendingItems, append(json.RawMessage(nil), item...))
+		}
+	}
+	flushAssistant()
+	return messages, nil
+}
+
+func responseReplayContent(item json.RawMessage) (string, error) {
+	input := responseInput{}
+	if err := json.Unmarshal(item, &input); err != nil {
+		return "", fmt.Errorf("decode Responses message replay item: %w", err)
+	}
+	switch content := input.Content.(type) {
+	case string:
+		return content, nil
+	case []any:
+		var text strings.Builder
+		for _, part := range content {
+			values, ok := part.(map[string]any)
+			if !ok {
+				continue
+			}
+			if value, ok := values["text"].(string); ok {
+				text.WriteString(value)
+			}
+		}
+		return text.String(), nil
+	default:
+		return "", fmt.Errorf("unsupported Responses replay message content")
+	}
 }
 
 func convertTools(tools []*schema.ToolInfo) ([]responseTool, error) {
@@ -245,7 +399,11 @@ func convertTools(tools []*schema.ToolInfo) ([]responseTool, error) {
 
 func convertResponse(response responsesResponse) (*schema.Message, error) {
 	message := schema.AssistantMessage("", nil)
-	for _, item := range response.Output {
+	for _, rawItem := range response.Output {
+		item := responseOutput{}
+		if err := json.Unmarshal(rawItem, &item); err != nil {
+			return nil, fmt.Errorf("decode Responses output item: %w", err)
+		}
 		if item.Type == "function_call" {
 			message.ToolCalls = append(message.ToolCalls, schema.ToolCall{
 				ID:   item.CallID,
@@ -264,6 +422,9 @@ func convertResponse(response responsesResponse) (*schema.Message, error) {
 				}
 			}
 		}
+	}
+	message.Extra = map[string]any{
+		"openai_responses_output": append([]json.RawMessage(nil), response.Output...),
 	}
 	if message.Content == "" && len(message.ToolCalls) == 0 {
 		return nil, fmt.Errorf("Responses API returned no text or function call")

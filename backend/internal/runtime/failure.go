@@ -23,6 +23,10 @@ const (
 	failureTimeout            = "llm_timeout"
 	failureUnavailable        = "llm_unavailable"
 	failureRuntime            = "runtime_error"
+	failureReplayMissing      = "provider_replay_missing"
+	failureReplayKey          = "provider_replay_key_unavailable"
+	failureReplayDecrypt      = "provider_replay_decrypt_failed"
+	failureReplayIncompatible = "provider_replay_incompatible"
 )
 
 // ClassifyRunFailure maps an execution error to a safe code and English message.
@@ -41,6 +45,21 @@ func ClassifyRunFailure(cause error) RunFailure {
 		return RunFailure{
 			Code:    failureStepLimit,
 			Message: "The agent reached its maximum step limit before finishing.",
+		}
+	}
+	if errors.Is(cause, ErrProviderReplayMissing) {
+		return RunFailure{Code: failureReplayMissing, Message: "Required provider continuation state is unavailable."}
+	}
+	if errors.Is(cause, ErrProviderReplayKeyUnavailable) {
+		return RunFailure{Code: failureReplayKey, Message: "Provider continuation encryption configuration is unavailable."}
+	}
+	if errors.Is(cause, ErrProviderReplayDecryptFailed) {
+		return RunFailure{Code: failureReplayDecrypt, Message: "Provider continuation state failed integrity validation."}
+	}
+	if errors.Is(cause, ErrProviderReplayIncompatible) {
+		return RunFailure{
+			Code:    failureReplayIncompatible,
+			Message: "Provider continuation state is incompatible with this run.",
 		}
 	}
 	if errors.Is(cause, context.DeadlineExceeded) {
@@ -82,7 +101,10 @@ func ClassifyRunFailure(cause error) RunFailure {
 			Code:    failureInvalidRequest,
 			Message: "The language model rejected the request. Check the agent model configuration and retry.",
 		}
-	case containsAny(text, "status code: 500", "status code: 502", "status code: 504", "service unavailable", "bad gateway"):
+	case containsAny(
+		text, "status code: 500", "status code: 502", "status code: 504",
+		"service unavailable", "bad gateway",
+	):
 		return RunFailure{
 			Code:    failureUnavailable,
 			Message: "The language model is temporarily unavailable. Please retry shortly.",

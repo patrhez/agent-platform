@@ -3,9 +3,11 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
+	"github.com/patrhez/agent-platform/backend/internal/domain"
 )
 
 func TestRestoreStateIncludesOrderedConversationHistory(t *testing.T) {
@@ -21,7 +23,8 @@ func TestRestoreStateIncludesOrderedConversationHistory(t *testing.T) {
 		},
 	}
 
-	state, ordinal, err := restoreState(input, nil, "test system prompt")
+	runner := &EinoRunner{definition: Definition{SystemPrompt: "test system prompt"}}
+	state, ordinal, err := runner.restoreState(input, nil)
 	if err != nil {
 		t.Fatalf("restoreState() error = %v", err)
 	}
@@ -64,7 +67,8 @@ func TestRestoreStateUsesCheckpointWithoutAppendingConversationHistory(t *testin
 		},
 	}
 
-	state, ordinal, err := restoreState(input, checkpoint, "test system prompt")
+	runner := &EinoRunner{definition: Definition{SystemPrompt: "test system prompt"}}
+	state, ordinal, err := runner.restoreState(input, checkpoint)
 	if err != nil {
 		t.Fatalf("restoreState() error = %v", err)
 	}
@@ -73,6 +77,166 @@ func TestRestoreStateUsesCheckpointWithoutAppendingConversationHistory(t *testin
 	}
 	if state.Messages[2].Content != "checkpointed answer" {
 		t.Errorf("restored answer = %q", state.Messages[2].Content)
+	}
+}
+
+func TestRestoreStateContinuesCompatibleConversationReplayForNewRun(t *testing.T) {
+	t.Parallel()
+	runner := testReplayRunner(t, "conversation")
+	replay, err := runner.replay.seal(testReplayContext("conversation"), []*schema.Message{
+		schema.SystemMessage("test system prompt"),
+		schema.UserMessage("first question"),
+		schema.AssistantMessage("first answer", nil),
+	})
+	if err != nil {
+		t.Fatalf("seal replay: %v", err)
+	}
+	input := replayTestInput(replay)
+	state, ordinal, err := runner.restoreState(input, nil)
+	if err != nil {
+		t.Fatalf("restoreState() error = %v", err)
+	}
+	if ordinal != 0 || len(state.Messages) != 4 {
+		t.Fatalf("restoreState() = ordinal %d, %d messages", ordinal, len(state.Messages))
+	}
+	if state.Messages[2].Content != "first answer" || state.Messages[3].Content != "next question" {
+		t.Fatalf("restored messages = %#v", state.Messages)
+	}
+}
+
+func TestRestoreStateResetsInvalidConversationReplayForNewRun(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*domain.ProviderReplay)
+	}{
+		{name: "provider mismatch", mutate: func(replay *domain.ProviderReplay) { replay.Provider = "other" }},
+		{name: "missing key", mutate: func(replay *domain.ProviderReplay) { replay.KeyID = "missing" }},
+		{name: "authentication failure", mutate: func(replay *domain.ProviderReplay) {
+			replay.Ciphertext[0] ^= 0xff
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runner := testReplayRunner(t, "conversation")
+			replay, err := runner.replay.seal(testReplayContext("conversation"), []*schema.Message{
+				schema.SystemMessage("test system prompt"), schema.UserMessage("old question"),
+			})
+			if err != nil {
+				t.Fatalf("seal replay: %v", err)
+			}
+			test.mutate(replay)
+			state, _, err := runner.restoreState(replayTestInput(replay), nil)
+			if err != nil {
+				t.Fatalf("restoreState() error = %v", err)
+			}
+			if len(state.Messages) != 4 || state.Messages[3].Content != "next question" {
+				t.Fatalf("new Run did not reset to safe history: %#v", state.Messages)
+			}
+		})
+	}
+}
+
+func TestRestoreStateIgnoresConversationHeadForRunScope(t *testing.T) {
+	t.Parallel()
+	runner := testReplayRunner(t, "run")
+	replay := &domain.ProviderReplay{ContinuationScope: "conversation"}
+	state, _, err := runner.restoreState(replayTestInput(replay), nil)
+	if err != nil {
+		t.Fatalf("restoreState() error = %v", err)
+	}
+	if len(state.Messages) != 4 || state.Messages[1].Content != "first question" {
+		t.Fatalf("run-scope new Run consumed Conversation head: %#v", state.Messages)
+	}
+}
+
+func TestRestoreStateFailsClosedWhenActiveRunReplayIsMissing(t *testing.T) {
+	t.Parallel()
+	runner := testReplayRunner(t, "run")
+	checkpoint, err := newCheckpoint("run-1", 1, checkpointState{
+		Messages: []*schema.Message{schema.SystemMessage("test system prompt")},
+	})
+	if err != nil {
+		t.Fatalf("newCheckpoint() error = %v", err)
+	}
+	_, _, err = runner.restoreState(AgentInput{RunID: "run-1", ConversationID: "conversation-1"}, checkpoint)
+	if !errors.Is(err, ErrProviderReplayMissing) {
+		t.Fatalf("restoreState() error = %v, want missing replay", err)
+	}
+}
+
+func TestRestoreStateFailsClosedForInvalidActiveRunReplay(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		mutate  func(*domain.ProviderReplay)
+		wantErr error
+	}{
+		{
+			name: "provider mismatch",
+			mutate: func(replay *domain.ProviderReplay) {
+				replay.Provider = "other"
+			},
+			wantErr: ErrProviderReplayIncompatible,
+		},
+		{
+			name: "missing key",
+			mutate: func(replay *domain.ProviderReplay) {
+				replay.KeyID = "missing"
+			},
+			wantErr: ErrProviderReplayKeyUnavailable,
+		},
+		{
+			name: "authentication failure",
+			mutate: func(replay *domain.ProviderReplay) {
+				replay.Ciphertext[0] ^= 0xff
+			},
+			wantErr: ErrProviderReplayDecryptFailed,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runner := testReplayRunner(t, "run")
+			checkpoint, err := runner.newCheckpoint(
+				"run-1", "conversation-1", 1,
+				checkpointState{Messages: []*schema.Message{schema.SystemMessage("test system prompt")}},
+			)
+			if err != nil {
+				t.Fatalf("newCheckpoint() error = %v", err)
+			}
+			test.mutate(checkpoint.ProviderReplay)
+			_, _, err = runner.restoreState(
+				AgentInput{RunID: "run-1", ConversationID: "conversation-1"}, checkpoint,
+			)
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("restoreState() error = %v, want %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func testReplayRunner(t *testing.T, scope string) *EinoRunner {
+	t.Helper()
+	return &EinoRunner{
+		replay: testReplayCodec(t),
+		definition: Definition{
+			SystemPrompt: "test system prompt",
+			Agent: AgentDefinition{Model: ModelDefinition{
+				Provider: "deepseek", APIMode: "chat_completions", Model: "deepseek-v4-pro",
+				ContinuationScope: scope, AdapterVersion: "deepseek-chat-completions/v1",
+			}},
+		},
+	}
+}
+
+func replayTestInput(replay *domain.ProviderReplay) AgentInput {
+	return AgentInput{
+		RunID: "run-2", ConversationID: "conversation-1", ProviderReplay: replay,
+		Messages: []ConversationMessage{
+			{Role: "user", Content: "first question"},
+			{Role: "assistant", Content: "first answer"},
+			{Role: "user", Content: "next question"},
+		},
 	}
 }
 

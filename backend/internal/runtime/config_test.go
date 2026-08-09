@@ -203,3 +203,17 @@ func TestLoadDefinitionParsesContextMiddlewareConfig(t *testing.T) {
 		t.Fatalf("reduction = %#v", definition.Agent.Context.Reduction)
 	}
 }
+
+func TestModelRequestFieldsCopiesProviderConfiguration(t *testing.T) {
+	definition := ModelDefinition{RequestFields: map[string]any{
+		"thinking": map[string]any{"type": "enabled"},
+	}}
+	fields := modelRequestFields(definition)
+	if fields["thinking"].(map[string]any)["type"] != "enabled" {
+		t.Fatalf("thinking request field = %#v", fields["thinking"])
+	}
+	fields["another"] = true
+	if _, found := definition.RequestFields["another"]; found {
+		t.Fatal("modelRequestFields() returned the configuration map directly")
+	}
+}

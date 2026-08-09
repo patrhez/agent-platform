@@ -59,7 +59,13 @@ func (store *Store) LoadRunExecution(
 	if len(messages) == 0 || messages[len(messages)-1].ID != run.TriggerMessageID {
 		return domain.RunExecution{}, fmt.Errorf("Conversation history for Run %s does not end at trigger Message", runID)
 	}
-	return domain.RunExecution{Run: domainRun(run), Messages: domainMessages(messages)}, nil
+	replay, err := latestConversationReplay(context, queries, run.ConversationID, time.Now().UTC())
+	if err != nil {
+		return domain.RunExecution{}, err
+	}
+	return domain.RunExecution{
+		Run: domainRun(run), Messages: domainMessages(messages), ProviderReplay: replay,
+	}, nil
 }
 
 // LatestCheckpoint returns the latest durable runtime state for a Run.
@@ -78,7 +84,48 @@ func (store *Store) LatestCheckpoint(
 	if err != nil {
 		return nil, fmt.Errorf("load latest Checkpoint for Run %s: %w", runID, err)
 	}
-	return domainCheckpoint(checkpoint), nil
+	domainValue := domainCheckpoint(checkpoint)
+	replay, err := queries.RunCheckpointReplay.WithContext(context).
+		Where(queries.RunCheckpointReplay.CheckpointID.Eq(checkpoint.ID)).
+		First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domainValue, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load provider replay for Checkpoint %s: %w", checkpoint.ID, err)
+	}
+	domainValue.ProviderReplay = domainProviderReplay(replay)
+	return domainValue, nil
+}
+
+func latestConversationReplay(
+	context context.Context,
+	queries *query.Query,
+	conversationID string,
+	now time.Time,
+) (*domain.ProviderReplay, error) {
+	head, err := queries.ConversationProviderContinuation.WithContext(context).
+		Where(
+			queries.ConversationProviderContinuation.ConversationID.Eq(conversationID),
+			queries.ConversationProviderContinuation.ExpiresAt.Gt(now),
+		).
+		First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load provider continuation head for Conversation %s: %w", conversationID, err)
+	}
+	replay, err := queries.RunCheckpointReplay.WithContext(context).
+		Where(queries.RunCheckpointReplay.CheckpointID.Eq(head.CheckpointID)).
+		First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load provider replay at continuation head %s: %w", head.CheckpointID, err)
+	}
+	return domainProviderReplay(replay), nil
 }
 
 // PersistBoundary stores one fenced execution boundary and its safe events.
@@ -252,6 +299,9 @@ func persistCheckpoint(
 	if checkpoint == nil {
 		return nil
 	}
+	if checkpoint.ProviderReplayRequired && checkpoint.ProviderReplay == nil {
+		return fmt.Errorf("required provider replay is missing for Checkpoint %s", checkpoint.ID)
+	}
 	modelCheckpoint := &model.RunCheckpoint{
 		ID:                 checkpoint.ID,
 		RunID:              checkpoint.RunID,
@@ -264,11 +314,39 @@ func persistCheckpoint(
 	if err := transaction.RunCheckpoint.WithContext(context).Create(modelCheckpoint); err != nil {
 		return fmt.Errorf("create Checkpoint %s: %w", checkpoint.ID, err)
 	}
+	if err := persistProviderReplay(context, transaction, checkpoint.ProviderReplay); err != nil {
+		return err
+	}
 	_, err := transaction.Run.WithContext(context).
 		Where(transaction.Run.ID.Eq(run.ID), transaction.Run.ExecutionToken.Eq(run.ExecutionToken)).
 		UpdateSimple(transaction.Run.LatestCheckpointID.Value(checkpoint.ID))
 	if err != nil {
 		return fmt.Errorf("set latest Checkpoint for Run %s: %w", run.ID, err)
+	}
+	return nil
+}
+
+func persistProviderReplay(
+	context context.Context,
+	transaction *query.Query,
+	replay *domain.ProviderReplay,
+) error {
+	if replay == nil {
+		return nil
+	}
+	row := &model.RunCheckpointReplay{
+		CheckpointID: replay.CheckpointID, RunID: replay.RunID,
+		ConversationID: replay.ConversationID, Provider: replay.Provider,
+		APIMode: replay.APIMode, Model: replay.Model,
+		ContinuationScope:     replay.ContinuationScope,
+		ArtifactSchemaVersion: replay.ArtifactSchemaVersion,
+		AdapterVersion:        replay.AdapterVersion, Encoding: replay.Encoding,
+		Compression: replay.Compression, EncryptionAlgorithm: replay.EncryptionAlgorithm,
+		KeyID: replay.KeyID, Nonce: replay.Nonce, Ciphertext: replay.Ciphertext,
+		CreatedAt: replay.CreatedAt,
+	}
+	if err := transaction.RunCheckpointReplay.WithContext(context).Create(row); err != nil {
+		return fmt.Errorf("create provider replay for Checkpoint %s: %w", replay.CheckpointID, err)
 	}
 	return nil
 }
@@ -332,6 +410,12 @@ func (store *Store) CompleteRun(context context.Context, completion domain.RunCo
 		if err != nil {
 			return err
 		}
+		terminalEvents, err := persistTerminalBoundary(
+			context, transaction, run, completion.TerminalBoundary,
+		)
+		if err != nil {
+			return err
+		}
 		if status, ok := assistantMessageStatus(completion.Status); ok {
 			if err := createAssistantMessage(
 				context, transaction, conversation, run, completion.AssistantText, status,
@@ -342,9 +426,17 @@ func (store *Store) CompleteRun(context context.Context, completion domain.RunCo
 		if err := completeRunRecord(context, transaction, run, completion); err != nil {
 			return err
 		}
-		events, err = persistEvents(context, transaction, run, []domain.RunEvent{completion.Event})
+		allEvents := append(terminalEvents, completion.Event)
+		events, err = persistEvents(context, transaction, run, allEvents)
 		if err != nil {
 			return err
+		}
+		if completion.Status == domain.RunStatusSucceeded && completion.TerminalBoundary != nil {
+			if err := advanceProviderContinuation(
+				context, transaction, run, completion.TerminalBoundary.Checkpoint,
+			); err != nil {
+				return err
+			}
 		}
 		return advanceExecutableRun(context, transaction, conversation)
 	})
@@ -352,6 +444,127 @@ func (store *Store) CompleteRun(context context.Context, completion domain.RunCo
 		return nil, fmt.Errorf("complete Run %s: %w", completion.RunID, err)
 	}
 	return events, nil
+}
+
+func persistTerminalBoundary(
+	context context.Context,
+	transaction *query.Query,
+	run *model.Run,
+	boundary *domain.ExecutionBoundary,
+) ([]domain.RunEvent, error) {
+	if boundary == nil {
+		return nil, nil
+	}
+	if boundary.RunID != run.ID || boundary.ExecutionToken != run.ExecutionToken {
+		return nil, fmt.Errorf("terminal boundary ownership mismatch for Run %s", run.ID)
+	}
+	if err := persistStep(context, transaction, *boundary, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+	if err := persistToolCall(context, transaction, boundary.ToolCall); err != nil {
+		return nil, err
+	}
+	if err := persistCheckpoint(context, transaction, run, boundary.Checkpoint); err != nil {
+		return nil, err
+	}
+	return boundary.Events, nil
+}
+
+const providerContinuationRetention = 7 * 24 * time.Hour
+
+func advanceProviderContinuation(
+	context context.Context,
+	transaction *query.Query,
+	run *model.Run,
+	checkpoint *domain.Checkpoint,
+) error {
+	if checkpoint == nil || checkpoint.ProviderReplay == nil ||
+		checkpoint.ProviderReplay.ContinuationScope != "conversation" {
+		return nil
+	}
+	replay := checkpoint.ProviderReplay
+	now := time.Now().UTC()
+	existing, err := transaction.ConversationProviderContinuation.WithContext(context).
+		Where(transaction.ConversationProviderContinuation.ConversationID.Eq(run.ConversationID)).
+		First()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return createProviderContinuation(context, transaction, run, replay, now)
+	}
+	if err != nil {
+		return fmt.Errorf("load provider continuation for Conversation %s: %w", run.ConversationID, err)
+	}
+	chainID := existing.ChainID
+	if continuationResetRequired(existing, replay, run.StartedAt) {
+		chainID = ulid.Make().String()
+	}
+	result, err := transaction.ConversationProviderContinuation.WithContext(context).
+		Where(
+			transaction.ConversationProviderContinuation.ConversationID.Eq(run.ConversationID),
+			transaction.ConversationProviderContinuation.HeadVersion.Eq(existing.HeadVersion),
+		).
+		UpdateSimple(
+			transaction.ConversationProviderContinuation.ChainID.Value(chainID),
+			transaction.ConversationProviderContinuation.CheckpointID.Value(replay.CheckpointID),
+			transaction.ConversationProviderContinuation.SourceRunID.Value(run.ID),
+			transaction.ConversationProviderContinuation.Provider.Value(replay.Provider),
+			transaction.ConversationProviderContinuation.APIMode.Value(replay.APIMode),
+			transaction.ConversationProviderContinuation.Model.Value(replay.Model),
+			transaction.ConversationProviderContinuation.ContinuationScope.Value(
+				replay.ContinuationScope,
+			),
+			transaction.ConversationProviderContinuation.ArtifactSchemaVersion.Value(
+				replay.ArtifactSchemaVersion,
+			),
+			transaction.ConversationProviderContinuation.AdapterVersion.Value(replay.AdapterVersion),
+			transaction.ConversationProviderContinuation.HeadVersion.Value(existing.HeadVersion+1),
+			transaction.ConversationProviderContinuation.ExpiresAt.Value(
+				now.Add(providerContinuationRetention),
+			),
+			transaction.ConversationProviderContinuation.UpdatedAt.Value(now),
+		)
+	if err != nil {
+		return fmt.Errorf("advance provider continuation for Conversation %s: %w", run.ConversationID, err)
+	}
+	if result.RowsAffected != 1 {
+		return ErrLeaseLost
+	}
+	return nil
+}
+
+func createProviderContinuation(
+	context context.Context,
+	transaction *query.Query,
+	run *model.Run,
+	replay *domain.ProviderReplay,
+	now time.Time,
+) error {
+	head := &model.ConversationProviderContinuation{
+		ConversationID: run.ConversationID, ChainID: ulid.Make().String(),
+		CheckpointID: replay.CheckpointID, SourceRunID: run.ID,
+		Provider: replay.Provider, APIMode: replay.APIMode, Model: replay.Model,
+		ContinuationScope:     replay.ContinuationScope,
+		ArtifactSchemaVersion: replay.ArtifactSchemaVersion,
+		AdapterVersion:        replay.AdapterVersion, HeadVersion: 1,
+		ExpiresAt: now.Add(providerContinuationRetention), CreatedAt: now, UpdatedAt: now,
+	}
+	if err := transaction.ConversationProviderContinuation.WithContext(context).Create(head); err != nil {
+		return fmt.Errorf("create provider continuation for Conversation %s: %w", run.ConversationID, err)
+	}
+	return nil
+}
+
+func continuationResetRequired(
+	existing *model.ConversationProviderContinuation,
+	replay *domain.ProviderReplay,
+	runStartedAt *time.Time,
+) bool {
+	if existing.Provider != replay.Provider || existing.APIMode != replay.APIMode ||
+		existing.Model != replay.Model || existing.AdapterVersion != replay.AdapterVersion ||
+		existing.ContinuationScope != replay.ContinuationScope ||
+		existing.ArtifactSchemaVersion != replay.ArtifactSchemaVersion {
+		return true
+	}
+	return runStartedAt != nil && !existing.ExpiresAt.After(*runStartedAt)
 }
 
 func assistantMessageStatus(status domain.RunStatus) (string, bool) {
@@ -460,6 +673,20 @@ func domainCheckpoint(checkpoint *model.RunCheckpoint) *domain.Checkpoint {
 		StateSchemaVersion: checkpoint.StateSchemaVersion,
 		Payload:            json.RawMessage(checkpoint.Payload),
 		CreatedAt:          checkpoint.CreatedAt,
+	}
+}
+
+func domainProviderReplay(replay *model.RunCheckpointReplay) *domain.ProviderReplay {
+	return &domain.ProviderReplay{
+		CheckpointID: replay.CheckpointID, RunID: replay.RunID,
+		ConversationID: replay.ConversationID, Provider: replay.Provider,
+		APIMode: replay.APIMode, Model: replay.Model,
+		ContinuationScope:     replay.ContinuationScope,
+		ArtifactSchemaVersion: replay.ArtifactSchemaVersion,
+		AdapterVersion:        replay.AdapterVersion, Encoding: replay.Encoding,
+		Compression: replay.Compression, EncryptionAlgorithm: replay.EncryptionAlgorithm,
+		KeyID: replay.KeyID, Nonce: append([]byte(nil), replay.Nonce...),
+		Ciphertext: append([]byte(nil), replay.Ciphertext...), CreatedAt: replay.CreatedAt,
 	}
 }
 

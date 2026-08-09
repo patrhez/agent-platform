@@ -19,31 +19,45 @@ const (
 
 // Config contains the environment-derived configuration shared by service roles.
 type Config struct {
-	MySQLDSN          string
-	RedisURL          string
-	LLMBaseURL        string
-	LLMAPIKey         string
-	LLMModel          string
-	WorkspaceMCPURL   string
-	WorkerID          string
-	WorkerConcurrency int
+	MySQLDSN             string
+	APIMySQLDSN          string
+	WorkerMySQLDSN       string
+	MigrationMySQLDSN    string
+	MaintenanceMySQLDSN  string
+	RedisURL             string
+	LLMBaseURL           string
+	LLMAPIKey            string
+	LLMModel             string
+	ReplayEncryptionKey  string
+	ReplayActiveKeyID    string
+	ReplayEncryptionKeys string
+	WorkspaceMCPURL      string
+	WorkerID             string
+	WorkerConcurrency    int
 }
 
 // Load reads the process configuration and validates values required by every role.
 func Load() (Config, error) {
 	config := Config{
-		MySQLDSN:        os.Getenv("MYSQL_DSN"),
-		RedisURL:        valueOrDefault("REDIS_URL", defaultRedisURL),
-		LLMBaseURL:      valueOrDefault("LLM_BASE_URL", defaultLLMBaseURL),
-		LLMAPIKey:       os.Getenv("LLM_API_KEY"),
-		LLMModel:        valueOrDefault("LLM_MODEL", defaultLLMModel),
-		WorkspaceMCPURL: valueOrDefault("WORKSPACE_MCP_URL", defaultWorkspaceMCPURL),
-		WorkerID:        valueOrDefault("WORKER_ID", defaultWorkerID),
+		MySQLDSN:             os.Getenv("MYSQL_DSN"),
+		RedisURL:             valueOrDefault("REDIS_URL", defaultRedisURL),
+		LLMBaseURL:           valueOrDefault("LLM_BASE_URL", defaultLLMBaseURL),
+		LLMAPIKey:            os.Getenv("LLM_API_KEY"),
+		LLMModel:             valueOrDefault("LLM_MODEL", defaultLLMModel),
+		ReplayEncryptionKey:  os.Getenv("REPLAY_ENCRYPTION_KEY"),
+		ReplayActiveKeyID:    os.Getenv("REPLAY_ENCRYPTION_ACTIVE_KEY_ID"),
+		ReplayEncryptionKeys: os.Getenv("REPLAY_ENCRYPTION_KEYS"),
+		WorkspaceMCPURL:      valueOrDefault("WORKSPACE_MCP_URL", defaultWorkspaceMCPURL),
+		WorkerID:             valueOrDefault("WORKER_ID", defaultWorkerID),
 	}
 
 	if config.MySQLDSN == "" {
 		return Config{}, errors.New("MYSQL_DSN is required")
 	}
+	config.APIMySQLDSN = valueOrDefault("API_MYSQL_DSN", config.MySQLDSN)
+	config.WorkerMySQLDSN = valueOrDefault("WORKER_MYSQL_DSN", config.MySQLDSN)
+	config.MigrationMySQLDSN = valueOrDefault("MIGRATION_MYSQL_DSN", config.MySQLDSN)
+	config.MaintenanceMySQLDSN = valueOrDefault("MAINTENANCE_MYSQL_DSN", config.MySQLDSN)
 
 	concurrency, err := concurrencyFromEnv("WORKER_CONCURRENCY", defaultWorkerConcurrency)
 	if err != nil {

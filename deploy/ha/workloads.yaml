@@ -182,6 +182,40 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
 ---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: replay-gc
+  namespace: agent-platform-ha
+  labels:
+    app.kubernetes.io/part-of: agent-platform
+    app.kubernetes.io/component: maintenance
+spec:
+  schedule: "17 * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: agent-platform
+            app.kubernetes.io/component: maintenance
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: replay-gc
+              image: agent-platform-worker:ha
+              imagePullPolicy: IfNotPresent
+              command: ["/usr/local/bin/replay-gc"]
+              envFrom:
+                - configMapRef:
+                    name: agent-platform-config
+                - secretRef:
+                    name: agent-platform-runtime
+              env:
+                - name: REPLAY_GC_BATCH_SIZE
+                  value: "100"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

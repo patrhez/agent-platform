@@ -11,12 +11,14 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"github.com/patrhez/agent-platform/backend/internal/domain"
 	"github.com/patrhez/agent-platform/backend/internal/logging"
 )
 
 func (runner *EinoRunner) runWithADK(
 	ctx context.Context,
 	runID string,
+	conversationID string,
 	attempt int,
 	state checkpointState,
 	ordinal int,
@@ -24,14 +26,16 @@ func (runner *EinoRunner) runWithADK(
 	emit func(RuntimeEvent) error,
 ) (Result, error) {
 	session := &adkEmitSession{
-		ctx:     ctx,
-		runID:   runID,
-		attempt: attempt,
-		state:   &state,
-		ordinal: &ordinal,
-		emit:    emit,
-		model:   runner.model,
-		logger:  runner.logger,
+		ctx:            ctx,
+		runID:          runID,
+		conversationID: conversationID,
+		attempt:        attempt,
+		state:          &state,
+		ordinal:        &ordinal,
+		emit:           emit,
+		model:          runner.model,
+		logger:         runner.logger,
+		runner:         runner,
 	}
 	agent, err := runner.newADKAgent(ctx, session, toolset)
 	if err != nil {
@@ -96,16 +100,21 @@ func (runner *EinoRunner) newADKAgent(
 // adkEmitSession maps ADK events into platform RuntimeEvents and Checkpoints.
 // ordinal is shared with the resume preamble so Checkpoint ordinals stay monotonic.
 type adkEmitSession struct {
-	mu      sync.Mutex
-	ctx     context.Context
-	runID   string
-	attempt int
-	state   *checkpointState
-	ordinal *int
-	emit    func(RuntimeEvent) error
-	model   model.ToolCallingChatModel
-	logger  logging.Logger
-	final   string
+	mu             sync.Mutex
+	ctx            context.Context
+	runID          string
+	conversationID string
+	attempt        int
+	state          *checkpointState
+	ordinal        *int
+	emit           func(RuntimeEvent) error
+	model          model.ToolCallingChatModel
+	logger         logging.Logger
+	runner         *EinoRunner
+	// providerResponseCaptured means AfterModelRewriteState has already placed
+	// the raw assistant response into state.Messages for this boundary.
+	providerResponseCaptured bool
+	final                    string
 }
 
 func (session *adkEmitSession) consumeADKEvents(
@@ -253,8 +262,11 @@ func (session *adkEmitSession) emitAssistantBoundary(message *schema.Message) er
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	session.state.Iteration++
-	session.state.Messages = append(session.state.Messages, message)
-	checkpoint, err := newCheckpoint(session.runID, *session.ordinal+1, *session.state)
+	if !session.providerResponseCaptured {
+		session.state.Messages = append(session.state.Messages, message)
+	}
+	session.providerResponseCaptured = false
+	checkpoint, err := session.newCheckpoint(*session.ordinal + 1)
 	if err != nil {
 		return err
 	}
@@ -278,7 +290,15 @@ func (session *adkEmitSession) emitAssistantBoundary(message *schema.Message) er
 		}
 	}
 	session.logEinoOutput(session.logContext(), event)
-	return session.emit(event)
+	if err := session.emit(event); err != nil {
+		return err
+	}
+	if len(message.ToolCalls) > 0 && session.runner != nil {
+		if err := session.runner.waitAfterToolCallCheckpoint(session.logContext()); err != nil {
+			return fmt.Errorf("wait after tool-call checkpoint: %w", err)
+		}
+	}
+	return nil
 }
 
 func (session *adkEmitSession) emitToolStart(request ToolRequest) error {
@@ -302,7 +322,7 @@ func (session *adkEmitSession) emitToolFinish(request ToolRequest, result ToolRe
 		request.ToolMessageCallID(),
 		schema.WithToolName(ModelToolName(request.Name)),
 	))
-	checkpoint, err := newCheckpoint(session.runID, *session.ordinal+1, *session.state)
+	checkpoint, err := session.newCheckpoint(*session.ordinal + 1)
 	if err != nil {
 		return err
 	}
@@ -324,4 +344,13 @@ func (session *adkEmitSession) logContext() context.Context {
 		return session.ctx
 	}
 	return context.Background()
+}
+
+func (session *adkEmitSession) newCheckpoint(ordinal int) (*domain.Checkpoint, error) {
+	if session.runner != nil {
+		return session.runner.newCheckpoint(
+			session.runID, session.conversationID, ordinal, *session.state,
+		)
+	}
+	return newCheckpoint(session.runID, ordinal, *session.state)
 }

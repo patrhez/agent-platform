@@ -56,6 +56,23 @@ func TestLoadWorkerConcurrencyDefault(t *testing.T) {
 	}
 }
 
+func TestLoadUsesRoleSpecificDatabaseDSNs(t *testing.T) {
+	t.Setenv("MYSQL_DSN", "shared")
+	t.Setenv("API_MYSQL_DSN", "api")
+	t.Setenv("WORKER_MYSQL_DSN", "worker")
+	t.Setenv("MIGRATION_MYSQL_DSN", "migration")
+	t.Setenv("MAINTENANCE_MYSQL_DSN", "maintenance")
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.APIMySQLDSN != "api" || got.WorkerMySQLDSN != "worker" ||
+		got.MigrationMySQLDSN != "migration" || got.MaintenanceMySQLDSN != "maintenance" {
+		t.Fatal("role-specific database DSNs were not selected")
+	}
+}
+
 func TestLoadWorkerConcurrencyExplicit(t *testing.T) {
 	t.Setenv("MYSQL_DSN", "demo:demo@tcp(mysql:3306)/agent_platform")
 	t.Setenv("WORKER_CONCURRENCY", "3")

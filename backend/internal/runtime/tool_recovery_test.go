@@ -38,6 +38,7 @@ func TestResumePendingToolCallsCompletesCheckpointedAssistantCalls(t *testing.T)
 	ordinal, err := (&EinoRunner{}).resumePendingToolCalls(
 		context.Background(),
 		"run-1",
+		"conversation-1",
 		&state,
 		3,
 		toolset,
@@ -71,6 +72,10 @@ func TestResumePendingToolCallsCompletesCheckpointedAssistantCalls(t *testing.T)
 		t.Fatalf("IdempotencyKey = %q", executor.lastRequest.IdempotencyKey)
 	}
 	if platformToolCallID(&state.Messages[0].ToolCalls[0]) != events[0].Tool.ID {
-		t.Fatalf("checkpointed platform tool ID = %q, want %q", platformToolCallID(&state.Messages[0].ToolCalls[0]), events[0].Tool.ID)
+		t.Fatalf(
+			"checkpointed platform tool ID = %q, want %q",
+			platformToolCallID(&state.Messages[0].ToolCalls[0]),
+			events[0].Tool.ID,
+		)
 	}
 }

@@ -119,6 +119,25 @@ Deletes an API pod and checks the service remains reachable.
 
 Exercises worker failover while a Run is in flight.
 
+### `./scripts/ha/test-reasoning-failover.sh`
+
+Runs the reasoning/tool-call checkpoint experiment against the configured live
+provider. It temporarily pauses the Worker after it persists the assistant
+tool-call checkpoint, waits for that boundary, and force-deletes the owning
+Worker.
+
+`MODE=baseline` deliberately removes the encrypted replay companion row and
+verifies that the replacement Worker fails closed with
+`provider_replay_missing`. It never sends an incomplete continuation to the
+provider. `MODE=protected` retains the companion and must succeed on a
+replacement Worker.
+
+```sh
+# Configure the single key or production keyring, rerun ./scripts/ha/up.sh, then:
+MODE=baseline ./scripts/ha/test-reasoning-failover.sh
+MODE=protected ./scripts/ha/test-reasoning-failover.sh
+```
+
 ## Related docs
 
 - Logging / trace id model: [`docs/tech/logging.md`](../../docs/tech/logging.md)

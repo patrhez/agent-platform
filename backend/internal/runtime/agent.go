@@ -21,13 +21,23 @@ var (
 	ErrStepLimit = errors.New("Agent step limit exceeded")
 	// ErrRunCancelled indicates that the user cancelled the Run during execution.
 	ErrRunCancelled = errors.New("Run cancelled")
+	// ErrProviderReplayMissing indicates that a required durable replay companion is absent.
+	ErrProviderReplayMissing = errors.New("required provider replay is missing")
+	// ErrProviderReplayKeyUnavailable indicates that the replay keyring cannot resolve a row key ID.
+	ErrProviderReplayKeyUnavailable = errors.New("provider replay key is unavailable")
+	// ErrProviderReplayDecryptFailed indicates that authenticated replay decryption failed.
+	ErrProviderReplayDecryptFailed = errors.New("provider replay decryption failed")
+	// ErrProviderReplayIncompatible indicates that an active Run cannot use its persisted artifact.
+	ErrProviderReplayIncompatible = errors.New("provider replay is incompatible")
 )
 
 // AgentInput is the platform-owned input to one Agent execution.
 type AgentInput struct {
-	RunID    string
-	Attempt  int
-	Messages []ConversationMessage
+	RunID          string
+	ConversationID string
+	Attempt        int
+	Messages       []ConversationMessage
+	ProviderReplay *domain.ProviderReplay
 }
 
 // ConversationMessage is one final user-visible turn supplied to a new Run.

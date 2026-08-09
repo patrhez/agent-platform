@@ -46,29 +46,29 @@ type Message struct {
 
 // Run is the durable Worker execution record and lease-fencing authority.
 type Run struct {
-	ID                  string         `gorm:"type:char(26);primaryKey"`
-	ConversationID      string         `gorm:"type:char(26);not null;uniqueIndex:uq_runs_conversation_seq,priority:1;index:idx_runs_conversation_status,priority:1"`
-	TriggerMessageID    string         `gorm:"type:char(26);not null;uniqueIndex"`
-	QueueSeq            int64          `gorm:"not null;uniqueIndex:uq_runs_conversation_seq,priority:2"`
-	Status              string         `gorm:"type:varchar(16);not null;index:idx_runs_claim,priority:1;index:idx_runs_conversation_status,priority:2"`
-	Attempt             int            `gorm:"not null;default:0"`
-	NextAttemptAt       time.Time      `gorm:"not null;precision:6;index:idx_runs_claim,priority:2"`
-	LeaseOwner          *string        `gorm:"type:varchar(128)"`
-	LeaseExpiresAt      *time.Time     `gorm:"precision:6;index:idx_runs_claim,priority:3"`
-	ExecutionToken      int64          `gorm:"not null;default:0"`
-	AgentConfigVersion  string         `gorm:"type:varchar(128);not null"`
-	SkillsBundleVersion string         `gorm:"type:varchar(128);not null"`
-	ModelConfig         datatypes.JSON `gorm:"type:json"`
-	WorkspaceRef        datatypes.JSON `gorm:"type:json"`
-	LatestCheckpointID  *string        `gorm:"type:char(26)"`
-	NextEventSeq        int64          `gorm:"not null;default:1"`
-	CancelRequestedAt   *time.Time     `gorm:"precision:6"`
+	ID                   string         `gorm:"type:char(26);primaryKey"`
+	ConversationID       string         `gorm:"type:char(26);not null;uniqueIndex:uq_runs_conversation_seq,priority:1;index:idx_runs_conversation_status,priority:1"`
+	TriggerMessageID     string         `gorm:"type:char(26);not null;uniqueIndex"`
+	QueueSeq             int64          `gorm:"not null;uniqueIndex:uq_runs_conversation_seq,priority:2"`
+	Status               string         `gorm:"type:varchar(16);not null;index:idx_runs_claim,priority:1;index:idx_runs_conversation_status,priority:2"`
+	Attempt              int            `gorm:"not null;default:0"`
+	NextAttemptAt        time.Time      `gorm:"not null;precision:6;index:idx_runs_claim,priority:2"`
+	LeaseOwner           *string        `gorm:"type:varchar(128)"`
+	LeaseExpiresAt       *time.Time     `gorm:"precision:6;index:idx_runs_claim,priority:3"`
+	ExecutionToken       int64          `gorm:"not null;default:0"`
+	AgentConfigVersion   string         `gorm:"type:varchar(128);not null"`
+	SkillsBundleVersion  string         `gorm:"type:varchar(128);not null"`
+	ModelConfig          datatypes.JSON `gorm:"type:json"`
+	WorkspaceRef         datatypes.JSON `gorm:"type:json"`
+	LatestCheckpointID   *string        `gorm:"type:char(26)"`
+	NextEventSeq         int64          `gorm:"not null;default:1"`
+	CancelRequestedAt    *time.Time     `gorm:"precision:6"`
 	TerminalErrorCode    *string        `gorm:"type:varchar(128)"`
 	TerminalErrorMessage *string        `gorm:"type:varchar(512)"`
 	StartedAt            *time.Time     `gorm:"precision:6"`
 	FinishedAt           *time.Time     `gorm:"precision:6"`
-	CreatedAt           time.Time      `gorm:"not null;precision:6"`
-	UpdatedAt           time.Time      `gorm:"not null;precision:6"`
+	CreatedAt            time.Time      `gorm:"not null;precision:6"`
+	UpdatedAt            time.Time      `gorm:"not null;precision:6"`
 }
 
 // RunStep is one user-explainable durable execution boundary.
@@ -111,6 +111,44 @@ type RunCheckpoint struct {
 	CreatedAt          time.Time      `gorm:"not null;precision:6"`
 }
 
+// RunCheckpointReplay stores the encrypted provider-native companion of a Checkpoint.
+type RunCheckpointReplay struct {
+	CheckpointID          string    `gorm:"type:char(26);primaryKey"`
+	RunID                 string    `gorm:"type:char(26);not null;index"`
+	ConversationID        string    `gorm:"type:char(26);not null;index"`
+	Provider              string    `gorm:"type:varchar(64);not null"`
+	APIMode               string    `gorm:"type:varchar(64);not null"`
+	Model                 string    `gorm:"type:varchar(255);not null"`
+	ContinuationScope     string    `gorm:"type:varchar(16);not null"`
+	ArtifactSchemaVersion int       `gorm:"not null"`
+	AdapterVersion        string    `gorm:"type:varchar(128);not null"`
+	Encoding              string    `gorm:"type:varchar(16);not null"`
+	Compression           string    `gorm:"type:varchar(16);not null"`
+	EncryptionAlgorithm   string    `gorm:"type:varchar(32);not null"`
+	KeyID                 string    `gorm:"type:varchar(128);not null;index"`
+	Nonce                 []byte    `gorm:"size:32;not null"`
+	Ciphertext            []byte    `gorm:"not null"`
+	CreatedAt             time.Time `gorm:"not null;precision:6"`
+}
+
+// ConversationProviderContinuation points to the current successful cross-Run replay.
+type ConversationProviderContinuation struct {
+	ConversationID        string    `gorm:"type:char(26);primaryKey"`
+	ChainID               string    `gorm:"type:char(26);not null"`
+	CheckpointID          string    `gorm:"type:char(26);not null;uniqueIndex"`
+	SourceRunID           string    `gorm:"type:char(26);not null;index"`
+	Provider              string    `gorm:"type:varchar(64);not null"`
+	APIMode               string    `gorm:"type:varchar(64);not null"`
+	Model                 string    `gorm:"type:varchar(255);not null"`
+	ContinuationScope     string    `gorm:"type:varchar(16);not null"`
+	ArtifactSchemaVersion int       `gorm:"not null"`
+	AdapterVersion        string    `gorm:"type:varchar(128);not null"`
+	HeadVersion           int64     `gorm:"not null"`
+	ExpiresAt             time.Time `gorm:"not null;precision:6;index"`
+	CreatedAt             time.Time `gorm:"not null;precision:6"`
+	UpdatedAt             time.Time `gorm:"not null;precision:6"`
+}
+
 // RunEvent is the durable replay source for a Run's SSE stream.
 type RunEvent struct {
 	ID          string         `gorm:"type:char(26);primaryKey"`
@@ -143,6 +181,8 @@ func All() []any {
 		&RunStep{},
 		&ToolCall{},
 		&RunCheckpoint{},
+		&RunCheckpointReplay{},
+		&ConversationProviderContinuation{},
 		&RunEvent{},
 		&Artifact{},
 	}

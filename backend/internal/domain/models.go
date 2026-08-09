@@ -104,19 +104,43 @@ type Artifact struct {
 
 // RunExecution contains the data a Worker needs to execute one claimed Run.
 type RunExecution struct {
-	Run      Run
-	Messages []Message
+	Run            Run
+	Messages       []Message
+	ProviderReplay *ProviderReplay
 }
 
 // Checkpoint is a versioned runtime state snapshot that can resume a Run.
 type Checkpoint struct {
-	ID                 string
-	RunID              string
-	Ordinal            int
-	RuntimeName        string
-	StateSchemaVersion int
-	Payload            json.RawMessage
-	CreatedAt          time.Time
+	ID                     string
+	RunID                  string
+	Ordinal                int
+	RuntimeName            string
+	StateSchemaVersion     int
+	Payload                json.RawMessage
+	ProviderReplay         *ProviderReplay
+	ProviderReplayRequired bool
+	CreatedAt              time.Time
+}
+
+// ProviderReplay is encrypted provider-native protocol state associated with one Checkpoint.
+// Ciphertext is never exposed through API or trace projections.
+type ProviderReplay struct {
+	CheckpointID          string
+	RunID                 string
+	ConversationID        string
+	Provider              string
+	APIMode               string
+	Model                 string
+	ContinuationScope     string
+	ArtifactSchemaVersion int
+	AdapterVersion        string
+	Encoding              string
+	Compression           string
+	EncryptionAlgorithm   string
+	KeyID                 string
+	Nonce                 []byte
+	Ciphertext            []byte
+	CreatedAt             time.Time
 }
 
 // ToolCall records the safe fields of one allowlisted Tool invocation.
@@ -159,11 +183,12 @@ type ExecutionBoundary struct {
 
 // RunCompletion is the durable terminal outcome for a Run.
 type RunCompletion struct {
-	RunID          string
-	ExecutionToken int64
-	Status         RunStatus
-	AssistantText  string
-	ErrorCode      string
-	ErrorMessage   string
-	Event          RunEvent
+	RunID            string
+	ExecutionToken   int64
+	Status           RunStatus
+	AssistantText    string
+	ErrorCode        string
+	ErrorMessage     string
+	Event            RunEvent
+	TerminalBoundary *ExecutionBoundary
 }
