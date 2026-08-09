@@ -17,12 +17,12 @@ const draft: AssistantDraft = {
 
 const userMessage: Message = {
   id: "user-1", conversationId: "conversation", seq: 1, role: "user",
-  content: "Where is the 500 thrown?", status: "final", createdAt: "now",
+  content: "Where is the 500 thrown?", status: "final", createdAt: "2026-07-18T00:00:00Z",
 };
 
 const assistantMessage: Message = {
   id: "assistant-1", conversationId: "conversation", seq: 2, role: "assistant",
-  content: "# Final answer", status: "final", runId: "run-1", createdAt: "now",
+  content: "# Final answer", status: "final", runId: "run-1", createdAt: "2026-07-18T00:00:01Z",
 };
 
 const run: Run = {
@@ -79,6 +79,19 @@ describe("Chat", () => {
     />);
     expect(screen.queryByRole("article", { name: "Agent is answering" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Final answer" })).toBeTruthy();
+  });
+
+  it("shows local timestamps for persisted user and assistant messages", () => {
+    const { container } = render(<Chat
+      messages={[userMessage, assistantMessage]}
+      runs={[run]}
+      onSend={vi.fn()}
+    />);
+    const timestamps = container.querySelectorAll("time.message-time");
+    expect(timestamps).toHaveLength(2);
+    expect(timestamps[0]).toHaveAttribute("datetime", "2026-07-18T00:00:00.000Z");
+    expect(timestamps[1]).toHaveAttribute("datetime", "2026-07-18T00:00:01.000Z");
+    expect(timestamps[0].textContent).not.toBe("");
   });
 
   it("renders a cancelled assistant Message with a Stopped marker", () => {

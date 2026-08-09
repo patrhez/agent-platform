@@ -5,6 +5,7 @@ import type { AssistantDraft } from "../state/conversation";
 import { MarkdownContent } from "./MarkdownContent";
 import { RunStatus } from "./RunStatus";
 import { RunTrace } from "./RunTrace";
+import { Timestamp } from "./Timestamp";
 
 const followUpModeKey = "agent-platform.followUpMode";
 const STICK_THRESHOLD_PX = 80;
@@ -120,6 +121,7 @@ export function Chat({
           <article className="user">
             <b>You</b>
             <p>{turn.user.content}</p>
+            <Timestamp value={turn.user.createdAt} className="message-time" />
           </article>
           {turn.run && <RunTrace run={turn.run} events={eventsByRunID[turn.run.id] ?? []} />}
           {turn.run && <RunStatus run={turn.run} />}
@@ -129,6 +131,7 @@ export function Chat({
           >
             <b>Agent{message.status === "cancelled" ? <span className="stopped-marker">Stopped</span> : null}</b>
             <MarkdownContent content={message.content} />
+            <Timestamp value={message.createdAt} className="message-time" />
           </article>)}
           {showDraft && draft && <article
             className="assistant streaming"

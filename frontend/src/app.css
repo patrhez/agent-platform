@@ -255,9 +255,25 @@ button.conversation-row {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.conversation-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+}
 .conversation-title {
   display: block;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-time {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -463,6 +479,16 @@ article.user {
   color: var(--text);
 }
 article.user p { margin: 0; white-space: pre-wrap; line-height: 1.55; }
+
+.message-time {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.2;
+}
+article.user .message-time { text-align: right; }
 
 article.assistant {
   max-width: 100%;

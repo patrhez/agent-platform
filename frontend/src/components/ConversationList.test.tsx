@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import { ConversationList } from "./ConversationList";
 
 const sample = [
-  { id: "c1", title: "Alpha", createdAt: "2026-07-26T00:00:00Z", updatedAt: "2026-07-26T00:00:00Z" },
+  {
+    id: "c1", title: "Alpha", createdAt: "2026-07-26T00:00:00Z",
+    updatedAt: "2026-07-26T00:00:00Z", latestMessageAt: "2026-07-27T01:02:00Z",
+  },
   { id: "c2", title: "Beta", createdAt: "2026-07-26T00:00:00Z", updatedAt: "2026-07-26T00:00:00Z" },
 ];
 
@@ -56,6 +59,15 @@ describe("ConversationList", () => {
     expect(row).toBeTruthy();
     await userEvent.click(within(row as HTMLElement).getByRole("button", { name: "Delete conversation" }));
     expect(onRequestDelete).toHaveBeenCalledWith("c1");
+  });
+
+  it("shows the latest activity time for every conversation", () => {
+    const { container } = render(<ConversationList {...baseProps} />);
+    const timestamps = container.querySelectorAll("time.conversation-time");
+    expect(timestamps).toHaveLength(2);
+    expect(timestamps[0]).toHaveAttribute("datetime", "2026-07-27T01:02:00.000Z");
+    expect(timestamps[1]).toHaveAttribute("datetime", "2026-07-26T00:00:00.000Z");
+    expect(timestamps[0].textContent).not.toBe("");
   });
 
   it("toggles selection instead of activating a conversation while selecting", async () => {

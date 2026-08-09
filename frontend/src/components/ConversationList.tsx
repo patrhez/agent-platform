@@ -1,4 +1,5 @@
 import type { Conversation } from "../api/client";
+import { Timestamp } from "./Timestamp";
 
 type ConversationListProps = {
   conversations: Conversation[];
@@ -57,7 +58,7 @@ export function ConversationList(props: ConversationListProps) {
               onClick={() => props.onToggleSelected(item.id)}
             >
               <input type="checkbox" readOnly checked={selected} tabIndex={-1} aria-hidden />
-              <span className="conversation-title">{item.title}</span>
+              <ConversationLabel conversation={item} />
             </button>
           );
         }
@@ -67,7 +68,7 @@ export function ConversationList(props: ConversationListProps) {
             className={item.id === props.activeID ? "selected conversation-row" : "conversation-row"}
           >
             <button type="button" className="conversation-main" onClick={() => props.onSelect(item.id)}>
-              <span className="conversation-title">{item.title}</span>
+              <ConversationLabel conversation={item} />
             </button>
             <button
               type="button"
@@ -84,5 +85,15 @@ export function ConversationList(props: ConversationListProps) {
         );
       })}
     </aside>
+  );
+}
+
+function ConversationLabel({ conversation }: { conversation: Conversation }) {
+  const activityAt = conversation.latestMessageAt ?? conversation.updatedAt ?? conversation.createdAt;
+  return (
+    <span className="conversation-label">
+      <span className="conversation-title">{conversation.title}</span>
+      <Timestamp value={activityAt} className="conversation-time" compact />
+    </span>
   );
 }
